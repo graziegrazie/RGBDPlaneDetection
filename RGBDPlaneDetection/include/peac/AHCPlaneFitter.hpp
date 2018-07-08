@@ -254,6 +254,7 @@ namespace ahc {
 		/**
 		 *  \brief print out the current parameters
 		 */
+#if 0 // TODO: Comment out is not elegant. Should be fixed!
 		void logParams() const {
 #define TMP_LOG_VAR(var) << #var "="<<(var)<<"\n"
 			std::cout<<"[PlaneFitter] Parameters:\n"
@@ -277,6 +278,7 @@ namespace ahc {
 			TMP_LOG_VAR(doRefine)<<std::endl;
 #undef TMP_LOG_VAR
 		}
+#endif
 
 		/************************************************************************/
 		/* Protected Class Functions                                            */
