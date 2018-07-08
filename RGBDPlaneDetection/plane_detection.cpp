@@ -92,7 +92,13 @@ bool PlaneDetection::readDepthImage(string filename)
 		for (int j = 0; j < cols; ++j)
 		{
 			double z = (double)(depth_img.at<unsigned short>(i, j)) / kScaleFactor;
+#if defined(_WIN32) || defined(_WIN64)
 			if (_isnan(z))
+#elif __linux__
+			if (isnan(z))
+#else
+ #error "Unexpected platform you are using"
+#endif
 			{
 				cloud.vertices[vertex_idx++] = VertexType(0, 0, z);
 				continue;

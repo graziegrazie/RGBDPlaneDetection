@@ -39,7 +39,13 @@ struct ImagePointCloud
 		const int pixIdx = row * w + col;
 		z = vertices[pixIdx][2];
 		// Remove points with 0 or invalid depth in case they are detected as a plane
+#if defined(_WIN32) || defined(_WIN64)
 		if (z == 0 || _isnan(z)) return false;
+#elif  __linux__
+		if (z == 0 || isnan(z)) return false;
+#else
+ #error "Unexpected platform you are using"
+#endif
 		x = vertices[pixIdx][0];
 		y = vertices[pixIdx][1];
 		return true;
