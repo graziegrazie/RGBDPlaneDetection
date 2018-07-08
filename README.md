@@ -22,7 +22,7 @@ RGBDPlaneDetection <-o> color_image depth_image
 In Windows, use Visual Studio to open sln file and compile and build the code.
 
 In Linux, you have to write MakeFile or CMakeLists file by yourself.
-On the other hand, you can convert sln file to CMakeLists easily if you use [cmakeconverter](https://github.com/algorys/cmakeconverter) or other converter.
+On the other hand, you can convert .vcxproj to CMakeLists easily if you use [cmakeconverter](https://github.com/algorys/cmakeconverter) or other converter.
 
 ## Output
 - Plane segmentation image in PNG
