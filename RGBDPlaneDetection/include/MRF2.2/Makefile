@@ -13,15 +13,12 @@ CPPFLAGS = $(OPT) $(WARN) -DUSE_64_BIT_PTR_CAST
 
 OBJ = $(SRC:.cpp=.o)
 
-all: libMRF.a example
+all: libMRF.a 
 
 libMRF.a: $(OBJ)
 	rm -f libMRF.a
 	ar ruc libMRF.a $(OBJ)
 	ranlib libMRF.a
-
-example: libMRF.a example.cpp
-	$(CC) -o example example.cpp -L. -lMRF
 
 clean: 
 	rm -f $(OBJ) core core.* *.stackdump *.bak
