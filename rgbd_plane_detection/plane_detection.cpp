@@ -135,7 +135,7 @@ auto PlaneDetection::runPlaneDetection() -> sensor_msgs::ImagePtr
 				plane_filter.membershipImg.at<int>(row, col) = plane_num_;
 	computePlaneSumStats(run_mrf);
 	
-	// IF YOU WANT TO SAVE IMAGES TO FILE
+	// // IF YOU WANT TO SAVE IMAGES TO FILE
 	// if(count >10){
 	// cv::imwrite("./input/color.png", color_img_);
 	// cv::imwrite("./input/depth.png", depth_img);
