@@ -32,8 +32,6 @@ find_package(catkin REQUIRED COMPONENTS
   image_transport
   tf
   dynamic_reconfigure
-  pcl_conversions
-  pcl_ros
 )
 
 FIND_PACKAGE(Eigen3 REQUIRED)
