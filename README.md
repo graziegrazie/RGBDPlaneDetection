@@ -14,12 +14,14 @@ RGBD plane detection and color-based plane refinement with MRF optimization. Thi
 - ROS Kinetic
 
 ## Usage
+Install to your catkin workspace and
+`catkin_make`
 ```
 $ roscore
 $ roslaunch realsense2_camera es_rgbd.launch
 $ rosrun rgbd_plane_detection rgbd_plane_detection
 ```
-Image is published as rostopic `/camera/plane_detection`.
+- Image is published as rostopic `/camera/plane_detection`
 
 ## Build
 In Windows, use Visual Studio to open sln file and compile and build the code.
