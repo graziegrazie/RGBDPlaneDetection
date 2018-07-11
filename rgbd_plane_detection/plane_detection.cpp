@@ -75,7 +75,6 @@ PlaneDetection::~PlaneDetection()
 
 void PlaneDetection::readColorImage(const sensor_msgs::ImageConstPtr& color_msg)
 {
-	ROS_INFO("Guten Morgen");
 	cv_bridge::CvImagePtr cv_ptr;
 	cv_ptr = cv_bridge::toCvCopy(color_msg, sensor_msgs::image_encodings::TYPE_8UC3);
 	color_img_ = cv_ptr->image;
@@ -88,7 +87,6 @@ void PlaneDetection::readColorImage(const sensor_msgs::ImageConstPtr& color_msg)
 
 void PlaneDetection::readDepthImage(const sensor_msgs::ImageConstPtr& depth_msg)
 {
-	ROS_INFO("Guten Tag");
 	cv_bridge::CvImagePtr cv_ptr;
 	cv_ptr = cv_bridge::toCvCopy(depth_msg, sensor_msgs::image_encodings::TYPE_16UC1);
 	depth_img = cv_ptr->image;
@@ -139,12 +137,7 @@ auto PlaneDetection::runPlaneDetection() -> sensor_msgs::ImagePtr
 	writePlaneLabelFile("label.txt");
 	writePlaneDataFile("data.txt");
 	
-	sensor_msgs::ImagePtr out_msg=cv_bridge::CvImage(std_msgs::Header(), "bgr8", seg_img_).toImageMsg();
-	// pub.publish(out_msg);
-	ROS_INFO("hello");
-	// cv::namedWindow("color");
-	// cv::imshow("color", color_img_);
-
+	// IF YOU WANT TO SAVE IMAGES TO FILE
 	// if(count >10){
 	// cv::imwrite("./input/color.png", color_img_);
 	// cv::imwrite("./input/depth.png", depth_img);
@@ -154,6 +147,7 @@ auto PlaneDetection::runPlaneDetection() -> sensor_msgs::ImagePtr
 	// }
 	// count++;
 
+	sensor_msgs::ImagePtr out_msg=cv_bridge::CvImage(std_msgs::Header(), "bgr8", seg_img_).toImageMsg();
 	return out_msg;
 }
 

@@ -91,16 +91,7 @@ int main(int argc, char** argv)
 	// plane_detection.runPlaneDetection();
 
 	image_transport::Publisher pub = it.advertise ("camera/plane_detection", 1);
-
-	// Key Check
-    const int32_t key = cv::waitKey( 10 );
-    if( key == 'q' ){
-        return -1;
-    }
-
 	sensor_msgs::ImagePtr msg;
-
-	// ros::spin ();
 
 	ros::Rate loop_rate(5);
   	while (nh.ok()) {
