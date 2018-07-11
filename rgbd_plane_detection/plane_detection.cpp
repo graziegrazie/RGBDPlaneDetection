@@ -134,8 +134,6 @@ auto PlaneDetection::runPlaneDetection() -> sensor_msgs::ImagePtr
 			if (plane_filter.membershipImg.at<int>(row, col) < 0)
 				plane_filter.membershipImg.at<int>(row, col) = plane_num_;
 	computePlaneSumStats(run_mrf);
-	writePlaneLabelFile("label.txt");
-	writePlaneDataFile("data.txt");
 	
 	// IF YOU WANT TO SAVE IMAGES TO FILE
 	// if(count >10){
