@@ -1,4 +1,7 @@
 #include "plane_detection.h"
+#include <ros/ros.h>
+#include <sensor_msgs/Image.h>
+#include <image_transport/image_transport.h>
 
 PlaneDetection plane_detection;
 
@@ -64,34 +67,49 @@ void runMRFOptimization()
 
 void printUsage()
 {
-	cout << "Usage: RGBDPlaneDetection <-o> color_image depth_image output_folder" << endl;
-	cout << "-o: run MRF-optimization based plane refinement" << endl;
+	cout << "Usage: rosrun RGBDPlaneDetection color:=color_image_topic depth:=depth_image_topic" << endl;
+	// cout << "-o: run MRF-optimization based plane refinement" << endl;
 }
 
 int main(int argc, char** argv)
 {
-	if (argc != 4 && argc != 5)
-	{
-		printUsage();
-		return -1;
-	}
-	bool run_mrf = string(argv[1]) == "-o" ? true : false;
-	string color_filename = run_mrf ? string(argv[2]) : string(argv[1]);
-	string depth_filename = run_mrf ? string(argv[3]) : string(argv[2]);
-	string output_folder = run_mrf ? string(argv[4]) : string(argv[3]);
-	
-	plane_detection.readDepthImage(depth_filename);
-	plane_detection.readColorImage(color_filename);
-	plane_detection.runPlaneDetection();
+	// Initialize ROS
+    ros::init (argc, argv, "RGBDPlaneDetection");
+    ros::NodeHandle nh;
+	image_transport::ImageTransport it(nh);
+	bool run_mrf = false;
 
-	if (run_mrf)
-	{
-		plane_detection.prepareForMRF();
-		runMRFOptimization();
-	}
-	int pos = color_filename.find_last_of("/\\");
-	string frame_name = color_filename.substr(pos + 1);
-	frame_name = frame_name.substr(0, frame_name.length() - 10);
-	plane_detection.writeOutputFiles(output_folder, frame_name, run_mrf);
+	// if (argc != 4 && argc != 5)
+	// {
+	// 	printUsage();
+	// 	return -1;
+	// }
+	
+	image_transport::Subscriber sub1 = it.subscribe ("/camera/color/image_rect_color", 1000, &PlaneDetection::readColorImage, &plane_detection);
+	image_transport::Subscriber sub2 = it.subscribe ("/camera/aligned_depth_to_color/image_raw", 1000, &PlaneDetection::readDepthImage, &plane_detection);
+
+	// plane_detection.runPlaneDetection();
+
+	image_transport::Publisher pub = it.advertise ("camera/plane_detection", 1);
+
+	// Key Check
+    const int32_t key = cv::waitKey( 10 );
+    if( key == 'q' ){
+        return -1;
+    }
+
+	sensor_msgs::ImagePtr msg;
+
+	// ros::spin ();
+
+	ros::Rate loop_rate(5);
+  	while (nh.ok()) {
+		msg = plane_detection.runPlaneDetection();
+    	pub.publish(msg);
+    	ros::spinOnce();
+    	loop_rate.sleep();
+  	}
+	
 	return 0;
+	
 }

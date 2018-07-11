@@ -37,9 +37,9 @@
 #include <stdlib.h>
 #include <opencv2/opencv.hpp>
 
-//#define DEBUG_CLUSTER
-//#define DEBUG_CALC
-//#define DEBUG_INIT
+// #define DEBUG_CLUSTER
+// #define DEBUG_CALC
+// #define DEBUG_INIT
 //#define EVAL_SPEED
 
 #include "AHCTypes.hpp"

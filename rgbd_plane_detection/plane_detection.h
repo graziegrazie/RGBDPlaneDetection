@@ -9,6 +9,10 @@
 #include "AHCPlaneFitter.hpp"
 #include "mrf.h"
 #include "GCoptimization.h"
+#include <sensor_msgs/image_encodings.h>
+#include <sensor_msgs/Image.h>
+#include <ros/ros.h>
+#include <image_transport/image_transport.h>
 
 using namespace std;
 
@@ -70,7 +74,9 @@ public:
 	vector<vector<int>> plane_vertices_; // vertex indices each plane contains
 	cv::Mat seg_img_; // segmentation image
 	cv::Mat color_img_; // input color image
+	cv::Mat depth_img;
 	int plane_num_;
+	int count;
 
 	/* For MRF optimization */
 	cv::Mat opt_seg_img_;
@@ -87,11 +93,11 @@ public:
 
 	//bool readIntrinsicParameterFile(string filename);
 
-	bool readColorImage(string filename);
+	void readColorImage(const sensor_msgs::ImageConstPtr& color_msg);
 
-	bool readDepthImage(string filename);
+	void readDepthImage(const sensor_msgs::ImageConstPtr& depth_msg);
 
-	bool runPlaneDetection();
+	auto runPlaneDetection() -> sensor_msgs::ImagePtr;
 
 	void prepareForMRF();
 

@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.0.0 FATAL_ERROR)
 # Change if you want modify path or other values. #
 ###################################################
 
-set(PROJECT_NAME RGBDPlaneDetection)
+set(PROJECT_NAME rgbd_plane_detection)
 # Output Variables
 set(OUTPUT_DEBUG Debug/bin)
 set(OUTPUT_RELEASE Release/bin)
@@ -21,11 +21,29 @@ set(HEADER_DIR_2 )
 
 project(${PROJECT_NAME} CXX)
 
+find_package(catkin REQUIRED COMPONENTS
+  message_generation
+  roscpp
+  rospy
+  sensor_msgs
+  std_msgs
+  nodelet
+  cv_bridge
+  image_transport
+  tf
+  dynamic_reconfigure
+  pcl_conversions
+  pcl_ros
+)
+
 FIND_PACKAGE(Eigen3 REQUIRED)
 FIND_PACKAGE(OpenCV REQUIRED)
 
+include_directories(${catkin_INCLUDE_DIRS})
 include_directories(include/MRF2.2)
 include_directories(include/peac)
+
+catkin_package()
 
 # Define Release by default.
 if(NOT CMAKE_BUILD_TYPE)
@@ -87,4 +105,4 @@ add_executable(${PROJECT_NAME}
    ${SRC_FILES}
 )
 
-target_link_libraries(${PROJECT_NAME} ${OpenCV_LIBS})
+target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES} ${OpenCV_LIBS})

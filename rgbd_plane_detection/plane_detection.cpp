@@ -1,6 +1,13 @@
 #include "plane_detection.h"
 #include <stdint.h>
 #include <iomanip> // output double value precision
+#include <sensor_msgs/Image.h>
+#include <cv_bridge/cv_bridge.h>
+#include <sensor_msgs/image_encodings.h>
+#include <ros/ros.h>
+#include <image_transport/image_transport.h>
+
+ros::Publisher pub;
 
 PlaneDetection::PlaneDetection()
 {
@@ -66,20 +73,25 @@ PlaneDetection::~PlaneDetection()
 //	return read_success;
 //}
 
-bool PlaneDetection::readColorImage(string filename)
+void PlaneDetection::readColorImage(const sensor_msgs::ImageConstPtr& color_msg)
 {
-	color_img_ = cv::imread(filename, CV_LOAD_IMAGE_COLOR);
+	ROS_INFO("Guten Morgen");
+	cv_bridge::CvImagePtr cv_ptr;
+	cv_ptr = cv_bridge::toCvCopy(color_msg, sensor_msgs::image_encodings::TYPE_8UC3);
+	color_img_ = cv_ptr->image;
 	if (color_img_.empty() || color_img_.depth() != CV_8U)
 	{
 		cout << "ERROR: cannot read color image. No such a file, or the image format is not 8UC3" << endl;
 		return false;
 	}
-	return true;
 }
 
-bool PlaneDetection::readDepthImage(string filename)
+void PlaneDetection::readDepthImage(const sensor_msgs::ImageConstPtr& depth_msg)
 {
-	cv::Mat depth_img = cv::imread(filename, CV_LOAD_IMAGE_ANYDEPTH);
+	ROS_INFO("Guten Tag");
+	cv_bridge::CvImagePtr cv_ptr;
+	cv_ptr = cv_bridge::toCvCopy(depth_msg, sensor_msgs::image_encodings::TYPE_16UC1);
+	depth_img = cv_ptr->image;
 	if (depth_img.empty() || depth_img.depth() != CV_16U)
 	{
 		cout << "WARNING: cannot read depth image. No such a file, or the image format is not 16UC1" << endl;
@@ -108,11 +120,11 @@ bool PlaneDetection::readDepthImage(string filename)
 			cloud.vertices[vertex_idx++] = VertexType(x, y, z);
 		}
 	}
-	return true;
 }
 
-bool PlaneDetection::runPlaneDetection()
+auto PlaneDetection::runPlaneDetection() -> sensor_msgs::ImagePtr
 {
+	bool run_mrf = false;
 	seg_img_ = cv::Mat(kDepthHeight, kDepthWidth, CV_8UC3);
 	plane_filter.run(&cloud, &plane_vertices_, &seg_img_);
 	plane_num_ = (int)plane_vertices_.size();
@@ -123,51 +135,70 @@ bool PlaneDetection::runPlaneDetection()
 		for (int col = 0; col < kDepthWidth; ++col)
 			if (plane_filter.membershipImg.at<int>(row, col) < 0)
 				plane_filter.membershipImg.at<int>(row, col) = plane_num_;
-	return true;
+	computePlaneSumStats(run_mrf);
+	writePlaneLabelFile("label.txt");
+	writePlaneDataFile("data.txt");
+	
+	sensor_msgs::ImagePtr out_msg=cv_bridge::CvImage(std_msgs::Header(), "bgr8", seg_img_).toImageMsg();
+	// pub.publish(out_msg);
+	ROS_INFO("hello");
+	// cv::namedWindow("color");
+	// cv::imshow("color", color_img_);
+
+	// if(count >10){
+	// cv::imwrite("./input/color.png", color_img_);
+	// cv::imwrite("./input/depth.png", depth_img);
+	// cv::imwrite("./result/result.png", seg_img_);
+	// PlaneDetection::writeOutputFiles("./result", "frame", run_mrf);
+	// count=0;
+	// }
+	// count++;
+
+	return out_msg;
 }
 
-void PlaneDetection::prepareForMRF()
-{
-	opt_seg_img_ = cv::Mat(kDepthHeight, kDepthWidth, CV_8UC3);
-	opt_membership_img_ = cv::Mat(kDepthHeight, kDepthWidth, CV_32SC1);
-	pixel_boundary_flags_.resize(kDepthWidth * kDepthHeight, false);
-	pixel_grayval_.resize(kDepthWidth * kDepthHeight, 0);
+// void PlaneDetection::prepareForMRF()
+// {
+// 	opt_seg_img_ = cv::Mat(kDepthHeight, kDepthWidth, CV_8UC3);
+// 	opt_membership_img_ = cv::Mat(kDepthHeight, kDepthWidth, CV_32SC1);
+// 	pixel_boundary_flags_.resize(kDepthWidth * kDepthHeight, false);
+// 	pixel_grayval_.resize(kDepthWidth * kDepthHeight, 0);
 
-	cv::Mat& mat_label = plane_filter.membershipImg;
-	for (int row = 0; row < kDepthHeight; ++row)
-	{
-		for (int col = 0; col < kDepthWidth; ++col)
-		{
-			pixel_grayval_[row * kDepthWidth + col] = RGB2Gray(row, col);
-			int label = mat_label.at<int>(row, col);
-			if ((row - 1 >= 0 && mat_label.at<int>(row - 1, col) != label)
-				|| (row + 1 < kDepthHeight && mat_label.at<int>(row + 1, col) != label)
-				|| (col - 1 >= 0 && mat_label.at<int>(row, col - 1) != label)
-				|| (col + 1 < kDepthWidth && mat_label.at<int>(row, col + 1) != label))
-			{
-				// Pixels in a fixed range near the boundary pixel are also regarded as boundary pixels
-				for (int x = max(row - kNeighborRange, 0); x < min(kDepthHeight, row + kNeighborRange); ++x)
-				{
-					for (int y = max(col - kNeighborRange, 0); y < min(kDepthWidth, col + kNeighborRange); ++y)
-					{
-						// If a pixel is not on any plane, then it is not a boundary pixel.
-						if (mat_label.at<int>(x, y) == plane_num_)
-							continue;
-						pixel_boundary_flags_[x * kDepthWidth + y] = true;
-					}
-				}
-			}
-		}
-	}
+// 	cv::Mat& mat_label = plane_filter.membershipImg;
+// 	for (int row = 0; row < kDepthHeight; ++row)
+// 	{
+// 		for (int col = 0; col < kDepthWidth; ++col)
+// 		{
+// 			pixel_grayval_[row * kDepthWidth + col] = RGB2Gray(row, col);
+// 			int label = mat_label.at<int>(row, col);
+// 			if ((row - 1 >= 0 && mat_label.at<int>(row - 1, col) != label)
+// 				|| (row + 1 < kDepthHeight && mat_label.at<int>(row + 1, col) != label)
+// 				|| (col - 1 >= 0 && mat_label.at<int>(row, col - 1) != label)
+// 				|| (col + 1 < kDepthWidth && mat_label.at<int>(row, col + 1) != label))
+// 			{
+// 				// Pixels in a fixed range near the boundary pixel are also regarded as boundary pixels
+// 				for (int x = max(row - kNeighborRange, 0); x < min(kDepthHeight, row + kNeighborRange); ++x)
+// 				{
+// 					for (int y = max(col - kNeighborRange, 0); y < min(kDepthWidth, col + kNeighborRange); ++y)
+// 					{
+// 						// If a pixel is not on any plane, then it is not a boundary pixel.
+// 						if (mat_label.at<int>(x, y) == plane_num_)
+// 							continue;
+// 						pixel_boundary_flags_[x * kDepthWidth + y] = true;
+// 					}
+// 				}
+// 			}
+// 		}
+// 	}
 
-	for (int pidx = 0; pidx < plane_num_; ++pidx)
-	{
-		int vidx = plane_vertices_[pidx][0];
-		cv::Vec3b c = seg_img_.at<cv::Vec3b>(vidx / kDepthWidth, vidx % kDepthWidth);
-		plane_colors_.push_back(c);
-	}
-	plane_colors_.push_back(cv::Vec3b(0,0,0)); // black for pixels not in any plane
-}
+// 	for (int pidx = 0; pidx < plane_num_; ++pidx)
+// 	{
+// 		int vidx = plane_vertices_[pidx][0];
+// 		cv::Vec3b c = seg_img_.at<cv::Vec3b>(vidx / kDepthWidth, vidx % kDepthWidth);
+// 		plane_colors_.push_back(c);
+// 	}
+// 	plane_colors_.push_back(cv::Vec3b(0,0,0)); // black for pixels not in any plane
+// }
 
 // Note: input filename_prefix is like '/rgbd-image-folder-path/frame-XXXXXX'
 void PlaneDetection::writeOutputFiles(string output_folder, string frame_name, bool run_mrf)
@@ -180,12 +211,12 @@ void PlaneDetection::writeOutputFiles(string output_folder, string frame_name, b
 	cv::imwrite(filename_prefix + ".png", seg_img_);
 	writePlaneLabelFile(filename_prefix + "-label.txt");
 	writePlaneDataFile(filename_prefix + "-data.txt");
-	if (run_mrf)
-	{
-		cv::imwrite(filename_prefix + "-opt.png", opt_seg_img_);
-		writePlaneLabelFile(filename_prefix + "-label-opt.txt", run_mrf);
-		writePlaneDataFile(filename_prefix + "-data-opt.txt", run_mrf);
-	}
+	// if (run_mrf)
+	// {
+	// 	cv::imwrite(filename_prefix + "-opt.png", opt_seg_img_);
+	// 	writePlaneLabelFile(filename_prefix + "-label-opt.txt", run_mrf);
+	// 	writePlaneDataFile(filename_prefix + "-data-opt.txt", run_mrf);
+	// }
 	
 }
 void PlaneDetection::writePlaneLabelFile(string filename, bool run_mrf /* = false */)
