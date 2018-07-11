@@ -1,4 +1,4 @@
-# RGBDPlaneDetection
+# RGBDPlaneDetection for ROS
 RGBD plane detection and color-based plane refinement with MRF optimization. This code is an implementation of the RGB-D plane detection part in the 3DLite paper shown below, specifically, Section 4.1 and 5.1 in the paper.
 
 ## Reference
@@ -11,12 +11,15 @@ RGBD plane detection and color-based plane refinement with MRF optimization. Thi
 - Eigen 3
 - [MRF 2.2](http://vision.middlebury.edu/MRF/code/) (already included)
 - [PEAC](http://www-personal.umich.edu/~cforrest/research.html) (already included)
+- ROS Kinetic
 
 ## Usage
 ```
-RGBDPlaneDetection <-o> color_image depth_image
+$ roscore
+$ roslaunch realsense2_camera es_rgbd.launch
+$ rosrun rgbd_plane_detection rgbd_plane_detection
 ```
-- `-o` is running MRF optimization to refine planes.
+Image is published as rostopic `/camera/plane_detection`.
 
 ## Build
 In Windows, use Visual Studio to open sln file and compile and build the code.
