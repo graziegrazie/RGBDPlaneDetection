@@ -7,8 +7,6 @@
 #include <ros/ros.h>
 #include <image_transport/image_transport.h>
 
-ros::Publisher pub;
-
 PlaneDetection::PlaneDetection()
 {
 	cloud.vertices.resize(kDepthHeight * kDepthWidth);
