@@ -32,6 +32,7 @@ find_package(catkin REQUIRED COMPONENTS
   image_transport
   tf
   dynamic_reconfigure
+  camera_info_manager
 )
 
 FIND_PACKAGE(Eigen3 REQUIRED)

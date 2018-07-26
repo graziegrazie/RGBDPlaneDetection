@@ -2,6 +2,7 @@
 #include <ros/ros.h>
 #include <sensor_msgs/Image.h>
 #include <image_transport/image_transport.h>
+#include <camera_info_manager/camera_info_manager.h>
 
 PlaneDetection plane_detection;
 
@@ -63,7 +64,13 @@ void runMRFOptimization()
 	delete data;
 }
 //-----------------------------------------------------------------
-
+void cameraInfoCallback(sensor_msgs::CameraInfo color_info)
+{
+	ros::NodeHandle nh;
+	color_info.header.frame_id ="plane_detection";
+	ros::Publisher pub_info = nh.advertise<sensor_msgs::CameraInfo>("/camera/plane_detection/camera_info", 1);
+	pub_info.publish(color_info);
+}
 
 void printUsage()
 {
@@ -84,16 +91,18 @@ int main(int argc, char** argv)
 	// 	printUsage();
 	// 	return -1;
 	// }
-	
-	image_transport::Subscriber sub1 = it.subscribe ("/camera/color/image_rect_color", 1000, &PlaneDetection::readColorImage, &plane_detection);
-	image_transport::Subscriber sub2 = it.subscribe ("/camera/aligned_depth_to_color/image_raw", 1000, &PlaneDetection::readDepthImage, &plane_detection);
 
-	// plane_detection.runPlaneDetection();
+	image_transport::Subscriber sub1 = it.subscribe ("/camera/color/image_rect_color", 1, &PlaneDetection::readColorImage, &plane_detection);
+	image_transport::Subscriber sub2 = it.subscribe ("/camera/aligned_depth_to_color/image_raw", 1, &PlaneDetection::readDepthImage, &plane_detection);
 
-	image_transport::Publisher pub = it.advertise ("camera/plane_detection", 1);
+	ros::Subscriber sub_info = nh.subscribe ("/camera/color/camera_info", 1, cameraInfoCallback);
+	ros::Publisher pub_info = nh.advertise<sensor_msgs::CameraInfo>("/camera/plane_detection/camera_info", 1);
+	// sensor_msgs::CameraInfo info;
+
+	image_transport::Publisher pub = it.advertise ("/camera/plane_detection/image", 1);
 	sensor_msgs::ImagePtr msg;
-
-	ros::Rate loop_rate(5);
+	
+	ros::Rate loop_rate(30);
   	while (nh.ok()) {
 		msg = plane_detection.runPlaneDetection();
     	pub.publish(msg);

@@ -132,16 +132,6 @@ auto PlaneDetection::runPlaneDetection() -> sensor_msgs::ImagePtr
 			if (plane_filter.membershipImg.at<int>(row, col) < 0)
 				plane_filter.membershipImg.at<int>(row, col) = plane_num_;
 	computePlaneSumStats(run_mrf);
-	
-	// // IF YOU WANT TO SAVE IMAGES TO FILE
-	// if(count >10){
-	// cv::imwrite("./input/color.png", color_img_);
-	// cv::imwrite("./input/depth.png", depth_img);
-	// cv::imwrite("./result/result.png", seg_img_);
-	// PlaneDetection::writeOutputFiles("./result", "frame", run_mrf);
-	// count=0;
-	// }
-	// count++;
 
 	sensor_msgs::ImagePtr out_msg=cv_bridge::CvImage(std_msgs::Header(), "bgr8", seg_img_).toImageMsg();
 	return out_msg;

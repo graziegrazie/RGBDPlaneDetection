@@ -1,0 +1,2 @@
+#plane_index number_of_points_on_the_plane plane_color_in_png_image(1x3) plane_normal(1x3) plane_center(1x3) sx sy sz sxx syy szz sxy syz sxz
+0 157553 0 0 255 -0.492623 -0.591498 -0.63832 16.0667 36.1222 247.489 31.2989 27.628348 243.43988 4705.5553 2458.4224 61113.344 -521.8144 6084.0947 6136.8245
