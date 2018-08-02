@@ -37,3 +37,22 @@ Here `(sx sy sz)` are average of sum of all 3D points `(x, y, z)` on the plane, 
 - Currently the code only works on [BundleFusion](http://graphics.stanford.edu/projects/bundlefusion/) or [3DLite](http://graphics.stanford.edu/projects/3dlite/) RGBD data. If you want to use other kinds of RGBD data, you need to rewrite the part of reading color and depth images, and reset the camera intrinsic parameters in `plane_detection.h`.
 - Note for the scale factor for depth images in `plane_detection.h`.
 - Sometimes the MRF 2.2 source code crashes in Visual Studio due to some memory management bug, but it seems to work fine in Linux. If you meet to problem, just have a try in Linux, or try to implement the graph-cut/max-flow code by yourself. One suggestion is to use *boykov_kolmogorov_max_flow* in Boost library. 
+
+# RGBDPlaneDetection for ROS
+
+## Dependencies
+- OpenCV
+- Eigen 3
+- [MRF 2.2](http://vision.middlebury.edu/MRF/code/) (already included)
+- [PEAC](http://www-personal.umich.edu/~cforrest/research.html) (already included)
+- ROS Kinetic
+
+## Usage
+Install to your catkin workspace and
+`catkin_make`
+```
+$ roscore
+$ roslaunch realsense2_camera rs_rgbd.launch
+$ rosrun rgbd_plane_detection rgbd_plane_detection
+```
+- Image is published as rostopic `/camera/plane_detection`
