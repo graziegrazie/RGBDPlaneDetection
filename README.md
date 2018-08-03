@@ -53,6 +53,6 @@ Install to your catkin workspace and
 ```
 $ roscore
 $ roslaunch realsense2_camera rs_rgbd.launch
-$ rosrun rgbd_plane_detection rgbd_plane_detection
+$ rosrun rgbd_plane_detection rgbd_plane_detection color:=camera_color_topic depth:=camera_depth_topic
 ```
 - Image is published as rostopic `/camera/plane_detection`
