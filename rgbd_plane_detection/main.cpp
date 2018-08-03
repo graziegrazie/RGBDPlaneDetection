@@ -74,7 +74,7 @@ void cameraInfoCallback(sensor_msgs::CameraInfo color_info)
 
 void printUsage()
 {
-	cout << "Usage: rosrun RGBDPlaneDetection color:=color_image_topic depth:=depth_image_topic" << endl;
+	cout << "Usage: rosrun rgbd_plane_detection rgbd_plane_detection color:=color_image_topic depth:=depth_image_topic" << endl;
 	// cout << "-o: run MRF-optimization based plane refinement" << endl;
 }
 
@@ -86,17 +86,13 @@ int main(int argc, char** argv)
 	image_transport::ImageTransport it(nh);
 	bool run_mrf = false;
 
-	// if (argc != 4 && argc != 5)
-	// {
-	// 	printUsage();
-	// 	return -1;
-	// }
+	printUsage();
 
-	image_transport::Subscriber sub1 = it.subscribe ("/camera/color/image_rect_color", 1, &PlaneDetection::readColorImage, &plane_detection);
-	image_transport::Subscriber sub2 = it.subscribe ("/camera/aligned_depth_to_color/image_raw", 1, &PlaneDetection::readDepthImage, &plane_detection);
+	image_transport::Subscriber sub1 = it.subscribe ("color", 1, &PlaneDetection::readColorImage, &plane_detection);
+	image_transport::Subscriber sub2 = it.subscribe ("depth", 1, &PlaneDetection::readDepthImage, &plane_detection);
 
-	ros::Subscriber sub_info = nh.subscribe ("/camera/color/camera_info", 1, cameraInfoCallback);
-	ros::Publisher pub_info = nh.advertise<sensor_msgs::CameraInfo>("/camera/plane_detection/camera_info", 1);
+	//ros::Subscriber sub_info = nh.subscribe ("/camera/color/camera_info", 1, cameraInfoCallback);
+	//ros::Publisher pub_info = nh.advertise<sensor_msgs::CameraInfo>("/camera/plane_detection/camera_info", 1);
 	// sensor_msgs::CameraInfo info;
 
 	image_transport::Publisher pub = it.advertise ("/camera/plane_detection/image", 1);
