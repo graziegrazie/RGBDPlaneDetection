@@ -56,11 +56,17 @@
   <build_depend>std_msgs</build_depend>
   <build_depend>cv_bridge</build_depend>
   <build_depend>camera_info_manager</build_depend>
+  <build_depend>plane_msgs</build_depend>
+  <build_depend>geometry_msgs</build_depend>
+
   <build_export_depend>roscpp</build_export_depend>
   <build_export_depend>rospy</build_export_depend>
   <build_export_depend>std_msgs</build_export_depend>
   <build_export_depend>cv_bridge</build_export_depend>
   <build_export_depend>camera_info_manager</build_export_depend>
+  <build_export_depend>plane_msgs</build_export_depend>
+  <build_export_depend>geometry_msgs</build_export_depend>
+
   <exec_depend>roscpp</exec_depend>
   <exec_depend>pcl_conversions</exec_depend>
   <exec_depend>pcl_ros</exec_depend>
@@ -68,7 +74,8 @@
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>cv_bridge</exec_depend>
   <exec_depend>camera_info_manager</exec_depend>
-
+  <exec_depend>plane_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
 
   <!-- The export tag contains other, unspecified, tags -->
   <export>

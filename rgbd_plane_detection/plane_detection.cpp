@@ -79,7 +79,6 @@ void PlaneDetection::readColorImage(const sensor_msgs::ImageConstPtr& color_msg)
 	if (color_img_.empty() || color_img_.depth() != CV_8U)
 	{
 		cout << "ERROR: cannot read color image. No such a file, or the image format is not 8UC3" << endl;
-		return false;
 	}
 }
 
@@ -91,7 +90,6 @@ void PlaneDetection::readDepthImage(const sensor_msgs::ImageConstPtr& depth_msg)
 	if (depth_img.empty() || depth_img.depth() != CV_16U)
 	{
 		cout << "WARNING: cannot read depth image. No such a file, or the image format is not 16UC1" << endl;
-		return false;
 	}
 	int rows = depth_img.rows, cols = depth_img.cols;
 	int vertex_idx = 0;
@@ -118,11 +116,12 @@ void PlaneDetection::readDepthImage(const sensor_msgs::ImageConstPtr& depth_msg)
 	}
 }
 
-auto PlaneDetection::runPlaneDetection() -> sensor_msgs::ImagePtr
+//auto PlaneDetection::runPlaneDetection() -> sensor_msgs::ImagePtr
+void PlaneDetection::runPlaneDetection()
 {
 	bool run_mrf = false;
 	seg_img_ = cv::Mat(kDepthHeight, kDepthWidth, CV_8UC3);
-	plane_filter.run(&cloud, &plane_vertices_, &seg_img_);
+	plane_filter.run(&cloud, &plane_vertices_, &seg_img_, nullptr, false);
 	plane_num_ = (int)plane_vertices_.size();
 
 	// Here we set the plane index of a pixel which does NOT belong to any plane as #planes.
@@ -133,8 +132,8 @@ auto PlaneDetection::runPlaneDetection() -> sensor_msgs::ImagePtr
 				plane_filter.membershipImg.at<int>(row, col) = plane_num_;
 	computePlaneSumStats(run_mrf);
 
-	sensor_msgs::ImagePtr out_msg=cv_bridge::CvImage(std_msgs::Header(), "bgr8", seg_img_).toImageMsg();
-	return out_msg;
+	//sensor_msgs::ImagePtr out_msg=cv_bridge::CvImage(std_msgs::Header(), "bgr8", seg_img_).toImageMsg();
+	//return out_msg;
 }
 
 // void PlaneDetection::prepareForMRF()

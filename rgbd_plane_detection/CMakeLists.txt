@@ -33,12 +33,14 @@ find_package(catkin REQUIRED COMPONENTS
   tf
   dynamic_reconfigure
   camera_info_manager
+  plane_msgs
+  geometry_msgs
 )
 
 FIND_PACKAGE(Eigen3 REQUIRED)
 FIND_PACKAGE(OpenCV REQUIRED)
 
-include_directories(${catkin_INCLUDE_DIRS})
+include_directories(include ${catkin_INCLUDE_DIRS})
 include_directories(include/MRF2.2)
 include_directories(include/peac)
 

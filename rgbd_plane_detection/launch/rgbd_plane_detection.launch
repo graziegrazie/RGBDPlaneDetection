@@ -1,0 +1,11 @@
+<launch>
+    <arg name="depth"           default="/xtion/depth_registered/hw_registered/image_rect"/>
+    <arg name="pointcloud2"     default="/xtion/depth_registered/points"/>
+
+    <node pkg="rgbd_plane_detection" type="rgbd_plane_detection" name="rgbd_plane_detection">
+        <remap from="depth"       to="$(arg depth)"/> 
+        <remap from="pointcloud2" to="$(arg pointcloud2)"/>
+        <param name="depth"       value="$(arg depth)"/>
+        <param name="pointcloud2" value="$(arg pointcloud2)"/>
+    </node>
+</launch>

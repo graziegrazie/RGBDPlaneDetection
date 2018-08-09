@@ -25,10 +25,10 @@ const float kInfVal = 1000000; // an infinite large value used in MRF optimizati
 
 // Camera intrinsic parameters.
 // All BundleFusion data uses the following parameters.
-const double kFx = 583;
-const double kFy = 583;
-const double kCx = 320;
-const double kCy = 240;
+const double kFx = 610.3269175889842;//583;
+const double kFy = 609.5897151088724;//583;
+const double kCx = 338.7448992364816;//320;
+const double kCy = 247.7442796454278;//240;
 const int kDepthWidth = 640;
 const int kDepthHeight = 480;
 
@@ -97,7 +97,8 @@ public:
 
 	void readDepthImage(const sensor_msgs::ImageConstPtr& depth_msg);
 
-	auto runPlaneDetection() -> sensor_msgs::ImagePtr;
+	//auto runPlaneDetection() -> sensor_msgs::ImagePtr;
+	void runPlaneDetection();
 
 	void prepareForMRF();
 
