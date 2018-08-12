@@ -19,11 +19,14 @@
 #include "rgbd_plane_detection/rgbd_plane_detection.h"
 #include "rgbd_plane_detection/rgbd_plane_detection_utils.h"
 #include <geometry_msgs/Point.h>
+#include <Eigen/Dense>
 
 using namespace cv;
 
 PlaneDetection plane_detection;
 image_transport::Publisher pub;
+
+
 
 //#define DEBUG
 
@@ -212,7 +215,8 @@ Result find_white_point(PlaneCandidateInfo& plane_candidate_info, cv::Vec2i& pos
 	return result;
 }
 
-Result get_3d_point_from_pointcloud2(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, cv::Vec2i& pose, cv::Vec3f& point)
+//Result get_3d_point_from_pointcloud2(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, cv::Vec2i& pose, cv::Vec3f& point)
+Result get_3d_point_from_pointcloud2(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, cv::Vec2i& pose, Eigen::Vector3d& point)
 {
 	Result result = Success;
 
@@ -276,68 +280,47 @@ Result calc_plane_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr
 
 	for(unsigned char i = 0; i < plane_candidate_info.size() ; i++)
 	{
+		std::vector<Eigen::Vector3d> points;
 		for(int j = 0; j < 100; j++)
 		{
-			cv::Vec2i pose1, pose2, pose3;
+			cv::Vec2i pose;
+			Eigen::Vector3d point;
 
-			find_white_point(plane_candidate_info[i], pose1);
-			find_white_point(plane_candidate_info[i], pose2);
-			find_white_point(plane_candidate_info[i], pose3);
-
-			if(TooClose == check_3points_distance(pose1, pose2, pose3))
+			find_white_point(plane_candidate_info[i], pose);
+			get_3d_point_from_pointcloud2(pointcloud2_ptr, pose, point);
+			if(IS_NAN_FOR_POINT(point))
 			{
-				result = Failure;
 				continue;
 			}
 			else
 			{
-				cv::Vec3f point1, point2, point3;
-
-				get_3d_point_from_pointcloud2(pointcloud2_ptr, pose1, point1);
-				if(IS_NAN_FOR_POINT(point1))
-				{
-					continue;
-				}
-				else
-				{
-					// no opeation
-				}
-
-				get_3d_point_from_pointcloud2(pointcloud2_ptr, pose2, point2);
-				if(IS_NAN_FOR_POINT(point2))
-				{
-					continue;
-				}
-				else
-				{
-					// no opeation
-				}
-
-				get_3d_point_from_pointcloud2(pointcloud2_ptr, pose3, point3);
-				if(IS_NAN_FOR_POINT(point3))
-				{
-					continue;
-				}
-				else
-				{
-					// no opeation
-				}
-
-				cv::Vec3f point1_to_point2 = (point2 - point1) / cv::norm(point2 - point1);
-				cv::Vec3f point1_to_point3 = (point3 - point1) / cv::norm(point3 - point1);
-
-				cv::Vec3f cross = point1_to_point2.cross(point1_to_point3);
-				std::cout << point1 << std::endl;
-				std::cout << point2 << std::endl;
-				std::cout << point3 << std::endl;
-				std::cout << "" << std::endl;
-
-				result = Success;
-				break;
+				points.push_back(point);
 			}
 		}
+
+		unsigned int num_of_points = points.size();
+		Eigen::MatrixXd A = Eigen::MatrixXd::Zero(num_of_points, 3);
+		Eigen::VectorXd b = Eigen::VectorXd::Zero(num_of_points);
+
+		for(unsigned int k = 0; k < (num_of_points - 1); k++)
+		{
+			Eigen::Vector3d temp_point = points[k];
+			A(k, 0) = temp_point[0];
+			A(k, 1) = temp_point[1];
+			A(k, 2) = 1;
+
+			b(k) = temp_point[2];
+		}
+		Eigen::Vector3d n = A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b);
+		Eigen::Vector3d n_ = n.normalized();
+		//std::cout << n.normalized() << std::endl;
+		//ROS_INFO("%+2.3lf %+2.3lf %+2.3lf", n_[0], n_[1], n_[2]);
+		double roll  = std::atan(n_[2] / n_[1]);
+		double pitch = std::atan(n_[2] / n_[0]);
+		double yaw   = std::atan(n_[1] / n_[0]);
+		ROS_INFO("%+3.3lf %+3.3lf %+3.3lf", RAD2DEG(roll), RAD2DEG(pitch), RAD2DEG(yaw));
 	}
-	std::cout << "" << std::endl;
+	//std::cout << "" << std::endl;
 	return result;
 }
 
@@ -369,7 +352,7 @@ int main(int argc, char** argv)
     ros::NodeHandle nh;
 	image_transport::ImageTransport it(nh);
 
-	printUsage();
+	//printUsage();
 
 	for(int i=0; i<10; ++i) {
 		colors.push_back(Scalar(default_colors[i][0], default_colors[i][1], default_colors[i][2]));
