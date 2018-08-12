@@ -97,8 +97,8 @@ public:
 
 	void readDepthImage(const sensor_msgs::ImageConstPtr& depth_msg);
 
-	//auto runPlaneDetection() -> sensor_msgs::ImagePtr;
-	void runPlaneDetection();
+	auto runPlaneDetection() -> sensor_msgs::ImagePtr;
+	//void runPlaneDetection();
 
 	void prepareForMRF();
 

@@ -14,24 +14,18 @@
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
 
-#include "plane_msgs/PlaneArray.h"
-#include "rgbd_plane_detection/rgbd_plane_detection_utils.h"
 #include <random>
-#include "geometry_msgs/Point.h"
+#include <cmath>
+#include "rgbd_plane_detection/rgbd_plane_detection.h"
+#include "rgbd_plane_detection/rgbd_plane_detection_utils.h"
+#include <geometry_msgs/Point.h>
 
 using namespace cv;
 
 PlaneDetection plane_detection;
 image_transport::Publisher pub;
 
-#define DEBUG
-
-using PlaneCandidateInfo = struct PlaneCandidateInfo_
-{
-	cv::Mat              imgs;
-	geometry_msgs::Point top_left_points;
-	plane_msgs::Plane    plane;
-};
+//#define DEBUG
 
 //-----------------------------------------------------------------
 // MRF energy functions
@@ -106,24 +100,8 @@ void printUsage()
 }
 
 /*****************************************************************************************************************************************/
-#define AREA_THRESHOLD (2000)
-
-const unsigned char default_colors[10][3] =
-{
-	{255, 0, 0},
-	{255, 255, 0},
-	{100, 20, 50},
-	{0, 30, 255},
-	{10, 255, 60},
-	{80, 10, 100},
-	{0, 255, 200},
-	{10, 60, 60},
-	{255, 0, 128},
-	{60, 128, 128}
-};
-vector<Scalar> colors;
-
-Result separate_region(const cv::Mat& img, std::vector<cv::Mat>& out_imgs, plane_msgs::PlaneArray plane_array)
+//Result separate_region(const cv::Mat& img, std::vector<cv::Mat>& out_imgs, plane_msgs::PlaneArray plane_array)
+Result separate_region(const cv::Mat& img, std::vector<PlaneCandidateInfo>& plane_candidate_info)
 {
 	Result result = Success;
 
@@ -133,12 +111,11 @@ Result separate_region(const cv::Mat& img, std::vector<cv::Mat>& out_imgs, plane
 
 	for(int i = 0; i < colors.size(); i++)
 	{
-		cv::Mat temp_img;
-		out_imgs.push_back(temp_img);
+		PlaneCandidateInfo temp_plane_candidate_info;
 		vector<vector <Point> > contours;
 
-		inRange(img, colors[i], colors[i], out_imgs[i]);
-		findContours(out_imgs[i], contours, RETR_TREE, CHAIN_APPROX_SIMPLE);
+		inRange(img, colors[i], colors[i], temp_plane_candidate_info.img);
+		findContours(temp_plane_candidate_info.img, contours, RETR_TREE, CHAIN_APPROX_SIMPLE);
 
 		if(0 == contours.size())
 		{
@@ -167,22 +144,26 @@ Result separate_region(const cv::Mat& img, std::vector<cv::Mat>& out_imgs, plane
 				// no operation
 			}
 		}
+		temp_plane_candidate_info.plane.header.frame_id = "/xtion_link";
+		temp_plane_candidate_info.plane.info.id         = i;
+		temp_plane_candidate_info.plane.info.width      = biggest_rect.width;
+		temp_plane_candidate_info.plane.info.height     = biggest_rect.height;
 
-		plane_msgs::Plane temp_plane;
-		temp_plane.header.frame_id = "/xtion_link";
-		temp_plane.info.id         = i;
-		temp_plane.info.width      = biggest_rect.width;
-		temp_plane.info.height     = biggest_rect.height;
-		
-		plane_array.planes.push_back(temp_plane);
+		geometry_msgs::Pose2D temp_pose;
+		temp_pose.x     = biggest_rect.x;
+		temp_pose.y     = biggest_rect.y;
+		temp_pose.theta = 0.0;
+		temp_plane_candidate_info.top_left_pose = temp_pose;
+
+		plane_candidate_info.push_back(temp_plane_candidate_info);
 
 #ifdef DEBUG
 		Scalar color = Scalar( rng.uniform(0, 256), rng.uniform(0,256), rng.uniform(0,256) );
-		rectangle( out_imgs[i], biggest_rect.tl(), biggest_rect.br(), color, 2 );
+		rectangle( temp_plane_candidate_info.img, biggest_rect.tl(), biggest_rect.br(), color, 2 );
 
 		ostringstream ostr;
 		ostr << "result image" << i;
-		imshow(ostr.str(), out_imgs[i]);
+		imshow(ostr.str(), temp_plane_candidate_info.img);
 	}
 	waitKey(100);
 #else
@@ -191,33 +172,179 @@ Result separate_region(const cv::Mat& img, std::vector<cv::Mat>& out_imgs, plane
 	return result;
 }
 
-Result calc_plane_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, std::vector<cv::Mat>& imgs, std::vector<std::vector<double>> top_left_points, plane_msgs::PlaneArray& plane_array)
+/*
+ * @param[in]  plane_candidate_info
+ * @param[out] pose
+ */
+Result find_white_point(PlaneCandidateInfo& plane_candidate_info, cv::Vec2i& pose)
 {
 	Result result = Success;
-
-	ROS_ASSERT_MSG(nullptr == pointcloud2_ptr,        "null pointcloud2 is entered");
-	ROS_ASSERT_MSG(imgs.size() == plane_array.size(), "different size vectors are entered");
 
 	std::mt19937 mt{ std::random_device{}() };
 	std::uniform_real_distribution<double> dist(0, 1);
 
-	for(unsigned char i = 0; i < imgs.size(); i++)
+	int plane_width  = plane_candidate_info.plane.info.width;
+	int plane_height = plane_candidate_info.plane.info.height;
+
+	int plane_top_left_x = plane_candidate_info.top_left_pose.x;
+	int plane_top_left_y = plane_candidate_info.top_left_pose.y;
+
+	for(unsigned char j = 0; j < 100; j++) // avoid eternal loop
 	{
-		for(unsigned char j = 0; j < 100; j++)
+		int px = dist(mt) * plane_width  + plane_top_left_x;
+		int py = dist(mt) * plane_height + plane_top_left_y;
+
+		Vec3b *src = plane_candidate_info.img.ptr<cv::Vec3b>(py); // Pointer to 1st element on Jth row.
+		if(white_color[0] == src[px][0] && 
+		   white_color[1] == src[px][1] &&
+		   white_color[2] == src[px][2])
 		{
-			double temp_x = dist(mt) * plane_array.planes[i].info.width + 0;
-			
+			pose[0] = px;
+			pose[1] = py;
+			break;
+		}
+		else
+		{
+			// keep searching
 		}
 	}
 
 	return result;
 }
 
+Result get_3d_point_from_pointcloud2(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, cv::Vec2i& pose, cv::Vec3f& point)
+{
+	Result result = Success;
+
+	int arrayPosition = pose[1] * pointcloud2_ptr->row_step + pose[0] * pointcloud2_ptr->point_step;
+	int arrayPosX = arrayPosition + pointcloud2_ptr->fields[0].offset; // X has an offset of 0
+	int arrayPosY = arrayPosition + pointcloud2_ptr->fields[1].offset; // Y has an offset of 4
+	int arrayPosZ = arrayPosition + pointcloud2_ptr->fields[2].offset; // Z has an offset of 8
+
+	float x, y, z;
+
+	memcpy(&x, &(pointcloud2_ptr->data[arrayPosX]), sizeof(float));
+	memcpy(&y, &(pointcloud2_ptr->data[arrayPosY]), sizeof(float));
+	memcpy(&z, &(pointcloud2_ptr->data[arrayPosZ]), sizeof(float));
+
+	point[0] = x;
+	point[1] = y;
+	point[2] = z;
+
+	return result;
+}
+
+Result check_3points_distance(cv::Vec2i& pose1, cv::Vec2i& pose2, cv::Vec2i& pose3)
+{
+	Result result = Success;
+
+	if(CHECK_RANGE_INCL_EQUAL(pose1[0] - pose2[0], 10) || CHECK_RANGE_INCL_EQUAL(pose1[1] - pose2[1], 10))
+	{
+		result = TooClose;
+	}
+	else if(CHECK_RANGE_INCL_EQUAL(pose2[0] - pose3[0], 10) || CHECK_RANGE_INCL_EQUAL(pose2[1] - pose3[1], 10))
+	{
+		result = TooClose;
+	}
+	else if(CHECK_RANGE_INCL_EQUAL(pose3[0] - pose1[0], 10) || CHECK_RANGE_INCL_EQUAL(pose3[1] - pose1[1], 10))
+	{
+		result = TooClose;
+	}
+	else // enough far among 3 points
+	{
+		result = Success;
+	}
+
+	return result;
+}
+
+Result calc_plane_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, std::vector<PlaneCandidateInfo>& plane_candidate_info)
+{
+	Result result = Success;
+
+	ROS_ASSERT_MSG(nullptr == pointcloud2_ptr,        "null pointcloud2 is entered");
+
+	if(0 == plane_candidate_info.size())
+	{
+		result = ConditionNotSatisfied;
+		return result;
+	}
+	else
+	{
+		// no operation
+	}
+
+	for(unsigned char i = 0; i < plane_candidate_info.size() ; i++)
+	{
+		for(int j = 0; j < 100; j++)
+		{
+			cv::Vec2i pose1, pose2, pose3;
+
+			find_white_point(plane_candidate_info[i], pose1);
+			find_white_point(plane_candidate_info[i], pose2);
+			find_white_point(plane_candidate_info[i], pose3);
+
+			if(TooClose == check_3points_distance(pose1, pose2, pose3))
+			{
+				result = Failure;
+				continue;
+			}
+			else
+			{
+				cv::Vec3f point1, point2, point3;
+
+				get_3d_point_from_pointcloud2(pointcloud2_ptr, pose1, point1);
+				if(IS_NAN_FOR_POINT(point1))
+				{
+					continue;
+				}
+				else
+				{
+					// no opeation
+				}
+
+				get_3d_point_from_pointcloud2(pointcloud2_ptr, pose2, point2);
+				if(IS_NAN_FOR_POINT(point2))
+				{
+					continue;
+				}
+				else
+				{
+					// no opeation
+				}
+
+				get_3d_point_from_pointcloud2(pointcloud2_ptr, pose3, point3);
+				if(IS_NAN_FOR_POINT(point3))
+				{
+					continue;
+				}
+				else
+				{
+					// no opeation
+				}
+
+				cv::Vec3f point1_to_point2 = (point2 - point1) / cv::norm(point2 - point1);
+				cv::Vec3f point1_to_point3 = (point3 - point1) / cv::norm(point3 - point1);
+
+				cv::Vec3f cross = point1_to_point2.cross(point1_to_point3);
+				std::cout << point1 << std::endl;
+				std::cout << point2 << std::endl;
+				std::cout << point3 << std::endl;
+				std::cout << "" << std::endl;
+
+				result = Success;
+				break;
+			}
+		}
+	}
+	std::cout << "" << std::endl;
+	return result;
+}
+
 void callback(const sensor_msgs::ImageConstPtr& depth_ptr, const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr)
 {
 	std::vector<cv::Mat> out_imgs;
-	plane_msgs::PlaneArray plane_array;
-	std::vector<std::vector<double>> top_left_points;
+	std::vector<PlaneCandidateInfo> plane_candidate_info;
 
 	if(nullptr == depth_ptr )
 	{
@@ -228,9 +355,11 @@ void callback(const sensor_msgs::ImageConstPtr& depth_ptr, const sensor_msgs::Po
 		plane_detection.readDepthImage(depth_ptr);
 	}
 
-	plane_detection.runPlaneDetection();
-	separate_region(plane_detection.seg_img_, out_imgs, plane_array);
-	calc_plane_normal(pointcloud2_ptr, out_imgs, top_left_points, plane_array);
+	sensor_msgs::ImagePtr img_ptr = plane_detection.runPlaneDetection();
+	pub.publish(*img_ptr);
+
+	separate_region(plane_detection.seg_img_, plane_candidate_info);
+	calc_plane_normal(pointcloud2_ptr, plane_candidate_info);
 }
 /*****************************************************************************************************************************************/
 int main(int argc, char** argv)

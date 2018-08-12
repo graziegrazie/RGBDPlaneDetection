@@ -116,8 +116,8 @@ void PlaneDetection::readDepthImage(const sensor_msgs::ImageConstPtr& depth_msg)
 	}
 }
 
-//auto PlaneDetection::runPlaneDetection() -> sensor_msgs::ImagePtr
-void PlaneDetection::runPlaneDetection()
+auto PlaneDetection::runPlaneDetection() -> sensor_msgs::ImagePtr
+//void PlaneDetection::runPlaneDetection()
 {
 	bool run_mrf = false;
 	seg_img_ = cv::Mat(kDepthHeight, kDepthWidth, CV_8UC3);
@@ -132,8 +132,8 @@ void PlaneDetection::runPlaneDetection()
 				plane_filter.membershipImg.at<int>(row, col) = plane_num_;
 	computePlaneSumStats(run_mrf);
 
-	//sensor_msgs::ImagePtr out_msg=cv_bridge::CvImage(std_msgs::Header(), "bgr8", seg_img_).toImageMsg();
-	//return out_msg;
+	sensor_msgs::ImagePtr out_msg=cv_bridge::CvImage(std_msgs::Header(), "bgr8", seg_img_).toImageMsg();
+	return out_msg;
 }
 
 // void PlaneDetection::prepareForMRF()
