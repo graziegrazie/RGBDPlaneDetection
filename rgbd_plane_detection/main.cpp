@@ -20,13 +20,49 @@
 #include "rgbd_plane_detection/rgbd_plane_detection_utils.h"
 #include <geometry_msgs/Point.h>
 #include <Eigen/Dense>
+#include <unsupported/Eigen/NonLinearOptimization>
 
 using namespace cv;
+using namespace Eigen;
+
+struct plane_functor
+{
+	std::vector<Vector3d> points_;
+
+	plane_functor(int inputs, int values, std::vector<Vector3d>& points) : inputs_(inputs), values_(values), points_(points) {}
+
+	int operator()(const VectorXd& in, VectorXd& out) const
+	{
+		for(unsigned int i = 0; i < values_; i++)
+		{
+			Vector3d point_ = points_[i];
+			out[i] = in[0] * point_[0] + in[1] * point_[1] + in[2] - point_[2];
+		}
+		return 0;
+	}
+
+	int df(const VectorXd& in, MatrixXd& out) const
+	{
+		for(unsigned int i = 0; i < values_; i++)
+		{
+			Vector3d point_ = points_[i];
+			double temp = in[0] * point_[0] + in[1] * point_[1] + in[2] - point_[2];
+
+			out(i, 0) = 2 * point_[0] * temp;
+			out(i, 1) = 2 * point_[1] * temp;
+			out(i, 2) = 2 * temp;
+		}
+		return 0;
+	}
+
+	const int inputs_;
+	const int values_;
+	int inputs() const {return inputs_;};
+	int values() const {return values_;};
+};
 
 PlaneDetection plane_detection;
 image_transport::Publisher pub;
-
-
 
 //#define DEBUG
 
@@ -106,7 +142,7 @@ void printUsage()
 //Result separate_region(const cv::Mat& img, std::vector<cv::Mat>& out_imgs, plane_msgs::PlaneArray plane_array)
 Result separate_region(const cv::Mat& img, std::vector<PlaneCandidateInfo>& plane_candidate_info)
 {
-	Result result = Success;
+	Result result = Succeeded;
 
 	RNG rng(12345);
 	ROS_ASSERT_MSG(nullptr == &img,      "null image is passed as img");
@@ -181,7 +217,7 @@ Result separate_region(const cv::Mat& img, std::vector<PlaneCandidateInfo>& plan
  */
 Result find_white_point(PlaneCandidateInfo& plane_candidate_info, cv::Vec2i& pose)
 {
-	Result result = Success;
+	Result result = Succeeded;
 
 	std::mt19937 mt{ std::random_device{}() };
 	std::uniform_real_distribution<double> dist(0, 1);
@@ -218,7 +254,7 @@ Result find_white_point(PlaneCandidateInfo& plane_candidate_info, cv::Vec2i& pos
 //Result get_3d_point_from_pointcloud2(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, cv::Vec2i& pose, cv::Vec3f& point)
 Result get_3d_point_from_pointcloud2(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, cv::Vec2i& pose, Eigen::Vector3d& point)
 {
-	Result result = Success;
+	Result result = Succeeded;
 
 	int arrayPosition = pose[1] * pointcloud2_ptr->row_step + pose[0] * pointcloud2_ptr->point_step;
 	int arrayPosX = arrayPosition + pointcloud2_ptr->fields[0].offset; // X has an offset of 0
@@ -240,7 +276,7 @@ Result get_3d_point_from_pointcloud2(const sensor_msgs::PointCloud2ConstPtr& poi
 
 Result check_3points_distance(cv::Vec2i& pose1, cv::Vec2i& pose2, cv::Vec2i& pose3)
 {
-	Result result = Success;
+	Result result = Succeeded;
 
 	if(CHECK_RANGE_INCL_EQUAL(pose1[0] - pose2[0], 10) || CHECK_RANGE_INCL_EQUAL(pose1[1] - pose2[1], 10))
 	{
@@ -256,7 +292,7 @@ Result check_3points_distance(cv::Vec2i& pose1, cv::Vec2i& pose2, cv::Vec2i& pos
 	}
 	else // enough far among 3 points
 	{
-		result = Success;
+		result = Succeeded;
 	}
 
 	return result;
@@ -264,7 +300,7 @@ Result check_3points_distance(cv::Vec2i& pose1, cv::Vec2i& pose2, cv::Vec2i& pos
 
 Result calc_plane_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, std::vector<PlaneCandidateInfo>& plane_candidate_info)
 {
-	Result result = Success;
+	Result result = Succeeded;
 
 	ROS_ASSERT_MSG(nullptr == pointcloud2_ptr,        "null pointcloud2 is entered");
 
@@ -280,11 +316,11 @@ Result calc_plane_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr
 
 	for(unsigned char i = 0; i < plane_candidate_info.size() ; i++)
 	{
-		std::vector<Eigen::Vector3d> points;
-		for(int j = 0; j < 100; j++)
+		std::vector<Vector3d> points;
+		for(int j = 0; j < 1000; j++)
 		{
 			cv::Vec2i pose;
-			Eigen::Vector3d point;
+			Vector3d point;
 
 			find_white_point(plane_candidate_info[i], pose);
 			get_3d_point_from_pointcloud2(pointcloud2_ptr, pose, point);
@@ -298,6 +334,15 @@ Result calc_plane_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr
 			}
 		}
 
+		VectorXd value(3); value << 1.0, 0.8, 0.2;
+		plane_functor functor(3, points.size(), points);
+    	LevenbergMarquardt<plane_functor> lm(functor);
+		lm.resetParameters();
+		lm.setEpsilon(0.0001);
+		lm.minimize(value);
+    	std::cout << value << std::endl;
+		std::cout << "" << std::endl;
+#if 0
 		unsigned int num_of_points = points.size();
 		Eigen::MatrixXd A = Eigen::MatrixXd::Zero(num_of_points, 3);
 		Eigen::VectorXd b = Eigen::VectorXd::Zero(num_of_points);
@@ -319,6 +364,7 @@ Result calc_plane_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr
 		double pitch = std::atan(n_[2] / n_[0]);
 		double yaw   = std::atan(n_[1] / n_[0]);
 		ROS_INFO("%+3.3lf %+3.3lf %+3.3lf", RAD2DEG(roll), RAD2DEG(pitch), RAD2DEG(yaw));
+#endif
 	}
 	//std::cout << "" << std::endl;
 	return result;

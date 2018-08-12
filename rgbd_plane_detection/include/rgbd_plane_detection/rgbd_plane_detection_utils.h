@@ -6,7 +6,7 @@
 
 enum Result
 {
-    Success = 0,
+    Succeeded = 0,
     Failure = 1,
     ConditionNotSatisfied = 2,
     TooClose = 3,

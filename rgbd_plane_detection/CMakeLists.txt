@@ -43,6 +43,7 @@ FIND_PACKAGE(OpenCV REQUIRED)
 include_directories(include ${catkin_INCLUDE_DIRS})
 include_directories(include/MRF2.2)
 include_directories(include/peac)
+include_directories(/usr/include/eigen3)
 
 catkin_package()
 
