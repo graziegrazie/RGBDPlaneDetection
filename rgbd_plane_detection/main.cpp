@@ -20,51 +20,16 @@
 #include "rgbd_plane_detection/rgbd_plane_detection_utils.h"
 #include <geometry_msgs/Point.h>
 #include <Eigen/Dense>
-#include <unsupported/Eigen/NonLinearOptimization>
+#include <algorithm>
 
 using namespace cv;
-using namespace Eigen;
-
-struct plane_functor
-{
-	std::vector<Vector3d> points_;
-
-	plane_functor(int inputs, int values, std::vector<Vector3d>& points) : inputs_(inputs), values_(values), points_(points) {}
-
-	int operator()(const VectorXd& in, VectorXd& out) const
-	{
-		for(unsigned int i = 0; i < values_; i++)
-		{
-			Vector3d point_ = points_[i];
-			out[i] = in[0] * point_[0] + in[1] * point_[1] + in[2] - point_[2];
-		}
-		return 0;
-	}
-
-	int df(const VectorXd& in, MatrixXd& out) const
-	{
-		for(unsigned int i = 0; i < values_; i++)
-		{
-			Vector3d point_ = points_[i];
-			double temp = in[0] * point_[0] + in[1] * point_[1] + in[2] - point_[2];
-
-			out(i, 0) = 2 * point_[0] * temp;
-			out(i, 1) = 2 * point_[1] * temp;
-			out(i, 2) = 2 * temp;
-		}
-		return 0;
-	}
-
-	const int inputs_;
-	const int values_;
-	int inputs() const {return inputs_;};
-	int values() const {return values_;};
-};
 
 PlaneDetection plane_detection;
 image_transport::Publisher pub;
 
 //#define DEBUG
+#define DIFF_THRESHOLD      (0.02)
+#define DIFF_THRESHOLD_TEST (0.05)
 
 //-----------------------------------------------------------------
 // MRF energy functions
@@ -215,7 +180,7 @@ Result separate_region(const cv::Mat& img, std::vector<PlaneCandidateInfo>& plan
  * @param[in]  plane_candidate_info
  * @param[out] pose
  */
-Result find_white_point(PlaneCandidateInfo& plane_candidate_info, cv::Vec2i& pose)
+Result find_white_point(PlaneCandidateInfo& plane_candidate_info, Eigen::Vector2i& pose)
 {
 	Result result = Succeeded;
 
@@ -252,7 +217,7 @@ Result find_white_point(PlaneCandidateInfo& plane_candidate_info, cv::Vec2i& pos
 }
 
 //Result get_3d_point_from_pointcloud2(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, cv::Vec2i& pose, cv::Vec3f& point)
-Result get_3d_point_from_pointcloud2(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, cv::Vec2i& pose, Eigen::Vector3d& point)
+Result get_3d_point_from_pointcloud2(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, Eigen::Vector2i& pose, Eigen::Vector3d& point)
 {
 	Result result = Succeeded;
 
@@ -298,6 +263,12 @@ Result check_3points_distance(cv::Vec2i& pose1, cv::Vec2i& pose2, cv::Vec2i& pos
 	return result;
 }
 
+struct normal_dev_info
+{
+	Eigen::Vector3d normal;
+	double square_dev;
+};
+
 Result calc_plane_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, std::vector<PlaneCandidateInfo>& plane_candidate_info)
 {
 	Result result = Succeeded;
@@ -316,57 +287,161 @@ Result calc_plane_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr
 
 	for(unsigned char i = 0; i < plane_candidate_info.size() ; i++)
 	{
-		std::vector<Vector3d> points;
-		for(int j = 0; j < 1000; j++)
+		std::vector<Eigen::Vector3d> normalized_normals;
+		for(int l = 0; l < 10; l++)
 		{
-			cv::Vec2i pose;
-			Vector3d point;
-
-			find_white_point(plane_candidate_info[i], pose);
-			get_3d_point_from_pointcloud2(pointcloud2_ptr, pose, point);
-			if(IS_NAN_FOR_POINT(point))
+			std::vector<Eigen::Vector3d> points;
+			for(int j = 0; j < 10; j++)
 			{
-				continue;
+				Eigen::Vector2i pose;
+				Eigen::Vector3d point;
+
+				find_white_point(plane_candidate_info[i], pose);
+				get_3d_point_from_pointcloud2(pointcloud2_ptr, pose, point);
+				if(IS_NAN_FOR_POINT(point))
+				{
+					continue;
+				}
+				else
+				{
+					points.push_back(point);
+				}
+			}
+
+			unsigned int num_of_points = points.size();
+			Eigen::MatrixXd A = Eigen::MatrixXd::Zero(num_of_points, 3);
+			Eigen::VectorXd b = Eigen::VectorXd::Zero(num_of_points);
+
+			for(unsigned int k = 0; k < (num_of_points - 1); k++)
+			{
+				Eigen::Vector3d temp_point = points[k];
+				A(k, 0) = temp_point[0];
+				A(k, 1) = temp_point[1];
+				A(k, 2) = 1;
+
+				b(k) = temp_point[2];
+			}
+			Eigen::Vector3d n = A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b);
+			Eigen::Vector3d n_ = n.normalized();
+#if 0
+			//std::cout << n.normalized() << std::endl;
+			//ROS_INFO("%+2.3lf %+2.3lf %+2.3lf", n_[0], n_[1], n_[2]);
+			double roll  = std::atan(n_[2] / n_[1]);
+			double pitch = std::atan(n_[2] / n_[0]);
+			double yaw   = std::atan(n_[1] / n_[0]);
+			ROS_INFO("[%d]%+3.3lf %+3.3lf %+3.3lf", l, RAD2DEG(roll), RAD2DEG(pitch), RAD2DEG(yaw));
+#endif
+			normalized_normals.push_back(n_);
+		}
+		double ave_x = 0, ave_y = 0, ave_z = 0;
+		for(auto itr: normalized_normals)
+		{
+			ave_x += itr[0];
+			ave_y += itr[1];
+			ave_z += itr[2];
+		}
+		ave_x /= normalized_normals.size();
+		ave_y /= normalized_normals.size();
+		ave_z /= normalized_normals.size();
+
+		std::vector<Eigen::Vector3d> refined_normals;
+
+		std::vector<normal_dev_info> infos;
+
+		double ave_xx = 0, ave_yy = 0, ave_zz = 0;
+		unsigned int current_index = 0;
+		for(auto itr: normalized_normals)
+		{
+			normal_dev_info temp;
+			temp.normal     = itr;
+			temp.square_dev = std::pow(itr[0] - ave_x, 2) + std::pow(itr[1] - ave_y, 2) + std::pow(itr[2] - ave_z, 2);
+			infos.push_back(temp);
+#if 0
+			double dif_x = itr[0] - ave_x;
+			double dif_y = itr[1] - ave_y;
+			double dif_z = itr[2] - ave_z;
+
+			if((dif_x < -DIFF_THRESHOLD || DIFF_THRESHOLD < dif_x) || (dif_y < -DIFF_THRESHOLD || DIFF_THRESHOLD < dif_y) || (dif_z < -DIFF_THRESHOLD || DIFF_THRESHOLD < dif_z))
+			{
+				double roll  = std::atan(itr[2] / itr[1]);
+				double pitch = std::atan(itr[2] / itr[0]);
+				double yaw   = std::atan(itr[1] / itr[0]);
+				ROS_INFO("[0]%+3.3lf %+3.3lf %+3.3lf", RAD2DEG(roll), RAD2DEG(pitch), RAD2DEG(yaw));
+			}
+			if((dif_x < -DIFF_THRESHOLD_TEST || DIFF_THRESHOLD_TEST < dif_x) || (dif_y < -DIFF_THRESHOLD_TEST || DIFF_THRESHOLD_TEST < dif_y) || (dif_z < -DIFF_THRESHOLD_TEST || DIFF_THRESHOLD_TEST < dif_z))
+			{
+				double roll  = std::atan(itr[2] / itr[1]);
+				double pitch = std::atan(itr[2] / itr[0]);
+				double yaw   = std::atan(itr[1] / itr[0]);
+				ROS_INFO("[1]%+3.3lf %+3.3lf %+3.3lf", RAD2DEG(roll), RAD2DEG(pitch), RAD2DEG(yaw));
 			}
 			else
 			{
-				points.push_back(point);
+				ave_xx += itr[0];
+				ave_yy += itr[1];
+				ave_zz += itr[2];
+
+				refined_normals.push_back(itr);
+
+				double roll  = std::atan(itr[2] / itr[1]);
+				double pitch = std::atan(itr[2] / itr[0]);
+				double yaw   = std::atan(itr[1] / itr[0]);
+				ROS_INFO("[2]%+3.3lf %+3.3lf %+3.3lf", RAD2DEG(roll), RAD2DEG(pitch), RAD2DEG(yaw));
 			}
+#endif
+			current_index++;
 		}
-
-		VectorXd value(3); value << 1.0, 0.8, 0.2;
-		plane_functor functor(3, points.size(), points);
-    	LevenbergMarquardt<plane_functor> lm(functor);
-		lm.resetParameters();
-		lm.setEpsilon(0.0001);
-		lm.minimize(value);
-    	std::cout << value << std::endl;
-		std::cout << "" << std::endl;
 #if 0
-		unsigned int num_of_points = points.size();
-		Eigen::MatrixXd A = Eigen::MatrixXd::Zero(num_of_points, 3);
-		Eigen::VectorXd b = Eigen::VectorXd::Zero(num_of_points);
-
-		for(unsigned int k = 0; k < (num_of_points - 1); k++)
+		for(auto itr_: infos)
 		{
-			Eigen::Vector3d temp_point = points[k];
-			A(k, 0) = temp_point[0];
-			A(k, 1) = temp_point[1];
-			A(k, 2) = 1;
-
-			b(k) = temp_point[2];
+			Eigen::Vector3d itr = itr_.normal;
+			double roll  = std::atan(itr[2] / itr[1]);
+			double pitch = std::atan(itr[2] / itr[0]);
+			double yaw   = std::atan(itr[1] / itr[0]);
+			ROS_INFO("[A]%+3.3lf %+3.3lf %+3.3lf", RAD2DEG(roll), RAD2DEG(pitch), RAD2DEG(yaw));
 		}
-		Eigen::Vector3d n = A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b);
-		Eigen::Vector3d n_ = n.normalized();
-		//std::cout << n.normalized() << std::endl;
-		//ROS_INFO("%+2.3lf %+2.3lf %+2.3lf", n_[0], n_[1], n_[2]);
-		double roll  = std::atan(n_[2] / n_[1]);
-		double pitch = std::atan(n_[2] / n_[0]);
-		double yaw   = std::atan(n_[1] / n_[0]);
-		ROS_INFO("%+3.3lf %+3.3lf %+3.3lf", RAD2DEG(roll), RAD2DEG(pitch), RAD2DEG(yaw));
+#endif
+		std::sort(infos.begin(), infos.end(), [](normal_dev_info x, normal_dev_info y){return x.square_dev > y.square_dev;});
+		std::cout << "" << std::endl;
+		//infos.erase(infos.end() - 5 , infos.end() - 1);
+		infos.erase(infos.begin(), infos.begin() + 4);
+		for(auto itr_: infos)
+		{
+			Eigen::Vector3d itr = itr_.normal;
+			double roll  = std::atan(itr[2] / itr[1]);
+			double pitch = std::atan(itr[2] / itr[0]);
+			double yaw   = std::atan(itr[1] / itr[0]);
+			ROS_INFO("[B]%+3.3lf %+3.3lf %+3.3lf", RAD2DEG(roll), RAD2DEG(pitch), RAD2DEG(yaw));
+		}
+#if 0
+		ave_xx /= refined_normals.size();
+		ave_yy /= refined_normals.size();
+		ave_zz /= refined_normals.size();
+
+		if(std::isnan(ave_xx) || std::isnan(ave_yy) || std::isnan(ave_zz))
+		{
+			double roll_  = std::atan(ave_z / ave_y);
+			double pitch_ = std::atan(ave_z / ave_x);
+			double yaw_   = std::atan(ave_y / ave_x);
+
+			ROS_INFO("%+3.3lf %+3.3lf %+3.3lf", RAD2DEG(roll_), RAD2DEG(pitch_), RAD2DEG(yaw_));
+		}
+		else
+		{
+			double roll_  = std::atan(ave_zz / ave_yy);
+			double pitch_ = std::atan(ave_zz / ave_xx);
+			double yaw_   = std::atan(ave_yy / ave_xx);
+
+			ROS_INFO("%+3.3lf %+3.3lf %+3.3lf", RAD2DEG(roll_), RAD2DEG(pitch_), RAD2DEG(yaw_));
+		}
+
+		//double roll  = std::atan(sum_z / sum_y);
+		//double pitch = std::atan(sum_y / sum_x);
+		//double yaw   = std::atan(sum_y / sum_x);
+		//ROS_INFO("   %+3.3lf %+3.3lf %+3.3lf", RAD2DEG(roll), RAD2DEG(pitch), RAD2DEG(yaw));
 #endif
 	}
-	//std::cout << "" << std::endl;
+	std::cout << "" << std::endl;
 	return result;
 }
 
