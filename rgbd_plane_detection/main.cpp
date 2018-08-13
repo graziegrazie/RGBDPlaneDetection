@@ -269,6 +269,60 @@ struct normal_dev_info
 	double square_dev;
 };
 
+Result calc_plane_normal_(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, PlaneCandidateInfo& plane_candidate_info, Eigen::Vector3d& normalized_normal)
+{
+	Result result = Succeeded;
+
+	Eigen::MatrixXd A = Eigen::MatrixXd::Zero(NUM_OF_POINTS_FOR_NORMAL_CALCULATION, 3);
+	Eigen::VectorXd b = Eigen::VectorXd::Zero(NUM_OF_POINTS_FOR_NORMAL_CALCULATION);
+
+	for(int j = 0; j < NUM_OF_POINTS_FOR_NORMAL_CALCULATION; j++)
+	{
+		Eigen::Vector2i pose;
+		Eigen::Vector3d point;
+
+		find_white_point(plane_candidate_info, pose);
+		get_3d_point_from_pointcloud2(pointcloud2_ptr, pose, point);
+		if(IS_NAN_FOR_POINT(point))
+		{
+			continue;
+		}
+		else
+		{
+			A(j, 0) = point[0];
+			A(j, 1) = point[1];
+			A(j, 2) = 1;
+
+			b(j) = point[2];
+		}
+	}
+
+	Eigen::Vector3d normal = A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b);
+	normalized_normal = normal.normalized();
+
+	return result;
+}
+
+Result sort_normals_with_deviation(std::vector<Eigen::Vector3d>& normalized_normals, Eigen::Vector3d average_normal, std::vector<normal_dev_info>& normal_dev_infos)
+{
+	Result result = Succeeded;
+
+	double ave_x = average_normal[0];
+	double ave_y = average_normal[1];
+	double ave_z = average_normal[2];
+
+	for(auto itr: normalized_normals)
+	{
+		normal_dev_info temp;
+		temp.normal     = itr;
+		temp.square_dev = std::pow(itr[0] - ave_x, 2) + std::pow(itr[1] - ave_y, 2) + std::pow(itr[2] - ave_z, 2);
+		normal_dev_infos.push_back(temp);
+	}
+	std::sort(normal_dev_infos.begin(), normal_dev_infos.end(), [](normal_dev_info x, normal_dev_info y){return x.square_dev > y.square_dev;});
+
+	return result;
+}
+
 /*
  * @brief This function estimate plane normal vector. The function resolves least square problem with SVD.
  */
@@ -295,32 +349,9 @@ Result calc_plane_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr
 
 		for(int l = 0; l < NUM_OF_NORMAL_VECTOR; l++)
 		{
-			Eigen::MatrixXd A = Eigen::MatrixXd::Zero(NUM_OF_POINTS_FOR_NORMAL_CALCULATION, 3);
-			Eigen::VectorXd b = Eigen::VectorXd::Zero(NUM_OF_POINTS_FOR_NORMAL_CALCULATION);
+			Eigen::Vector3d normalized_normal;
 
-			for(int j = 0; j < NUM_OF_POINTS_FOR_NORMAL_CALCULATION; j++)
-			{
-				Eigen::Vector2i pose;
-				Eigen::Vector3d point;
-
-				find_white_point(plane_candidate_info[plane_index], pose);
-				get_3d_point_from_pointcloud2(pointcloud2_ptr, pose, point);
-				if(IS_NAN_FOR_POINT(point))
-				{
-					continue;
-				}
-				else
-				{
-					A(j, 0) = point[0];
-					A(j, 1) = point[1];
-					A(j, 2) = 1;
-
-					b(j) = point[2];
-				}
-			}
-
-			Eigen::Vector3d normal = A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b);
-			Eigen::Vector3d normalized_normal = normal.normalized();
+			calc_plane_normal_(pointcloud2_ptr, plane_candidate_info[plane_index], normalized_normal);
 			normalized_normals.push_back( normalized_normal );
 
 			// INFO: This line assumes that normalized normal must be detected at 10 times.
@@ -332,15 +363,10 @@ Result calc_plane_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr
 		ave_y /= normalized_normals.size();
 		ave_z /= normalized_normals.size();
 
+		Eigen::Vector3d average_normal; average_normal << ave_x, ave_y, ave_z;
+
 		std::vector<normal_dev_info> normal_dev_infos;
-		for(auto itr: normalized_normals)
-		{
-			normal_dev_info temp;
-			temp.normal     = itr;
-			temp.square_dev = std::pow(itr[0] - ave_x, 2) + std::pow(itr[1] - ave_y, 2) + std::pow(itr[2] - ave_z, 2);
-			normal_dev_infos.push_back(temp);
-		}
-		std::sort(normal_dev_infos.begin(), normal_dev_infos.end(), [](normal_dev_info x, normal_dev_info y){return x.square_dev > y.square_dev;});
+		sort_normals_with_deviation(normalized_normals, average_normal, normal_dev_infos);
 		normal_dev_infos.erase(normal_dev_infos.begin(), normal_dev_infos.begin() + 4);
 
 		double ave_xx = 0, ave_yy = 0, ave_zz = 0;
@@ -351,7 +377,7 @@ Result calc_plane_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr
 			ave_yy += temp[1];
 		}
 		double yaw_angle = std::atan(ave_yy / ave_xx);
-		plane_candidate_info[plane_index].pi3 = yaw_angle;
+		plane_candidate_info[plane_index].plane.pose.pi3 = yaw_angle;
 
 #ifdef DEBUG
 		for(auto itr_: normal_dev_infos)
