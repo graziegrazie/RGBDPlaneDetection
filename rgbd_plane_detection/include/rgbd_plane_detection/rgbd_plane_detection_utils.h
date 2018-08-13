@@ -10,6 +10,7 @@ enum Result
     Failure = 1,
     ConditionNotSatisfied = 2,
     TooClose = 3,
+    UnexpectedPointEntered = 4,
     NumOfError,
 };
 
