@@ -28,8 +28,8 @@ PlaneDetection plane_detection;
 image_transport::Publisher pub;
 
 //#define DEBUG
-#define DIFF_THRESHOLD      (0.02)
-#define DIFF_THRESHOLD_TEST (0.05)
+#define NUM_OF_NORMAL_VECTOR					(10)
+#define NUM_OF_POINTS_FOR_NORMAL_CALCULATION	(10)
 
 //-----------------------------------------------------------------
 // MRF energy functions
@@ -269,6 +269,9 @@ struct normal_dev_info
 	double square_dev;
 };
 
+/*
+ * @brief This function estimate plane normal vector. The function resolves least square problem with SVD.
+ */
 Result calc_plane_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, std::vector<PlaneCandidateInfo>& plane_candidate_info)
 {
 	Result result = Succeeded;
@@ -288,10 +291,14 @@ Result calc_plane_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr
 	for(unsigned char plane_index = 0; plane_index < plane_candidate_info.size() ; plane_index++)
 	{
 		std::vector<Eigen::Vector3d> normalized_normals;
-		for(int l = 0; l < 10; l++)
+		double ave_x = 0, ave_y = 0, ave_z = 0;
+
+		for(int l = 0; l < NUM_OF_NORMAL_VECTOR; l++)
 		{
-			std::vector<Eigen::Vector3d> points;
-			for(int j = 0; j < 10; j++)
+			Eigen::MatrixXd A = Eigen::MatrixXd::Zero(NUM_OF_POINTS_FOR_NORMAL_CALCULATION, 3);
+			Eigen::VectorXd b = Eigen::VectorXd::Zero(NUM_OF_POINTS_FOR_NORMAL_CALCULATION);
+
+			for(int j = 0; j < NUM_OF_POINTS_FOR_NORMAL_CALCULATION; j++)
 			{
 				Eigen::Vector2i pose;
 				Eigen::Vector3d point;
@@ -304,64 +311,60 @@ Result calc_plane_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr
 				}
 				else
 				{
-					points.push_back(point);
+					A(j, 0) = point[0];
+					A(j, 1) = point[1];
+					A(j, 2) = 1;
+
+					b(j) = point[2];
 				}
 			}
 
-			unsigned int num_of_points = points.size();
-			Eigen::MatrixXd A = Eigen::MatrixXd::Zero(num_of_points, 3);
-			Eigen::VectorXd b = Eigen::VectorXd::Zero(num_of_points);
+			Eigen::Vector3d normal = A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b);
+			Eigen::Vector3d normalized_normal = normal.normalized();
+			normalized_normals.push_back( normalized_normal );
 
-			for(unsigned int k = 0; k < (num_of_points - 1); k++)
-			{
-				Eigen::Vector3d temp_point = points[k];
-				A(k, 0) = temp_point[0];
-				A(k, 1) = temp_point[1];
-				A(k, 2) = 1;
-
-				b(k) = temp_point[2];
-			}
-			Eigen::Vector3d n = A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b);
-			Eigen::Vector3d n_ = n.normalized();
-
-			normalized_normals.push_back(n_);
-		}
-		double ave_x = 0, ave_y = 0, ave_z = 0;
-		for(auto itr: normalized_normals)
-		{
-			ave_x += itr[0];
-			ave_y += itr[1];
-			ave_z += itr[2];
+			// INFO: This line assumes that normalized normal must be detected at 10 times.
+			ave_x += normalized_normal[0];
+			ave_y += normalized_normal[1];
+			ave_z += normalized_normal[2];
 		}
 		ave_x /= normalized_normals.size();
 		ave_y /= normalized_normals.size();
 		ave_z /= normalized_normals.size();
 
-		std::vector<Eigen::Vector3d> refined_normals;
-
-		std::vector<normal_dev_info> infos;
-
-		double ave_xx = 0, ave_yy = 0, ave_zz = 0;
+		std::vector<normal_dev_info> normal_dev_infos;
 		for(auto itr: normalized_normals)
 		{
 			normal_dev_info temp;
 			temp.normal     = itr;
 			temp.square_dev = std::pow(itr[0] - ave_x, 2) + std::pow(itr[1] - ave_y, 2) + std::pow(itr[2] - ave_z, 2);
-			infos.push_back(temp);
+			normal_dev_infos.push_back(temp);
 		}
+		std::sort(normal_dev_infos.begin(), normal_dev_infos.end(), [](normal_dev_info x, normal_dev_info y){return x.square_dev > y.square_dev;});
+		normal_dev_infos.erase(normal_dev_infos.begin(), normal_dev_infos.begin() + 4);
 
-		std::sort(infos.begin(), infos.end(), [](normal_dev_info x, normal_dev_info y){return x.square_dev > y.square_dev;});
-		infos.erase(infos.begin(), infos.begin() + 4);
-		for(auto itr_: infos)
+		double ave_xx = 0, ave_yy = 0, ave_zz = 0;
+		for(auto itr: normal_dev_infos)
+		{
+			Eigen::Vector3d temp = itr.normal;
+			ave_xx += temp[0];
+			ave_yy += temp[1];
+		}
+		double yaw_angle = std::atan(ave_yy / ave_xx);
+		plane_candidate_info[plane_index].pi3 = yaw_angle;
+
+#ifdef DEBUG
+		for(auto itr_: normal_dev_infos)
 		{
 			Eigen::Vector3d itr = itr_.normal;
 			double roll  = std::atan(itr[2] / itr[1]);
 			double pitch = std::atan(itr[2] / itr[0]);
 			double yaw   = std::atan(itr[1] / itr[0]);
-			ROS_INFO("[B]%+3.3lf %+3.3lf %+3.3lf", RAD2DEG(roll), RAD2DEG(pitch), RAD2DEG(yaw));
+			ROS_INFO("%+3.3lf %+3.3lf %+3.3lf", RAD2DEG(roll), RAD2DEG(pitch), RAD2DEG(yaw));
 		}
+		std::cout << "" << std::endl;
+#endif
 	}
-	std::cout << "" << std::endl;
 	return result;
 }
 
