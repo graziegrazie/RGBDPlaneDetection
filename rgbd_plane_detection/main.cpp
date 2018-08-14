@@ -360,10 +360,7 @@ Result calc_plane_3d_position_on_camera_coordinate(const sensor_msgs::PointCloud
 		}
 		else
 		{
-			ave_x += point[0];
-			ave_y += point[1];
-			ave_z += point[2];
-
+			plane_candidate_info.plane.pose.pi4 += point[2];
 			num_of_detected_points++;
 		}
 	}
@@ -374,9 +371,7 @@ Result calc_plane_3d_position_on_camera_coordinate(const sensor_msgs::PointCloud
 	}
 	else
 	{
-		plane_candidate_info.plane.pose.pi1 = ave_x / num_of_detected_points;
-		plane_candidate_info.plane.pose.pi2 = ave_y / num_of_detected_points;
-		plane_candidate_info.plane.pose.pi3 = ave_z / num_of_detected_points;
+		plane_candidate_info.plane.pose.pi4 /= num_of_detected_points;
 	}
 	return result;
 }
