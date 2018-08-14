@@ -416,6 +416,28 @@ Result calc_plane_3d_position_on_camera_coordinate(const sensor_msgs::PointCloud
 	return result;
 }
 
+Result calc_refined_average_normal(std::vector<Eigen::Vector3d>& normalized_normals, Eigen::Vector3d& average_normal, plane_msgs::PlanePose& plane_pose)
+{
+	Result result = Succeeded;
+
+	std::vector<normal_dev_info> normal_dev_infos;
+	sort_normals_with_deviation(normalized_normals, average_normal, normal_dev_infos);
+	// TODO: Use Macro or other method not to use magic number
+	normal_dev_infos.erase(normal_dev_infos.begin(), normal_dev_infos.begin() + 4);
+
+	for(auto itr: normal_dev_infos)
+	{
+		plane_pose.pi1 += itr.normal[0];
+		plane_pose.pi2 += itr.normal[1];
+		plane_pose.pi3 += itr.normal[2];
+	}
+	plane_pose.pi1 /= normal_dev_infos.size();
+	plane_pose.pi2 /= normal_dev_infos.size();
+	plane_pose.pi3 /= normal_dev_infos.size();
+
+	return result;
+}
+
 /*
  * @brief This function estimate plane normal vector. The function resolves least square problem with SVD.
  */
@@ -447,6 +469,7 @@ Result calc_plane_2d_coordinate_on_camera_coordinate(const sensor_msgs::PointClo
 			plane_candidate_info_ptr->plane.pose.pi1 = std::numeric_limits<double>::quiet_NaN();
 			plane_candidate_info_ptr->plane.pose.pi2 = std::numeric_limits<double>::quiet_NaN();
 			plane_candidate_info_ptr->plane.pose.pi3 = std::numeric_limits<double>::quiet_NaN();
+			plane_candidate_info_ptr->plane.pose.pi4 = std::numeric_limits<double>::quiet_NaN();
 
 			continue;
 		}
@@ -454,26 +477,11 @@ Result calc_plane_2d_coordinate_on_camera_coordinate(const sensor_msgs::PointClo
 		{
 			// no operation
 		}
-
-		std::vector<normal_dev_info> normal_dev_infos;
-		sort_normals_with_deviation(normalized_normals, average_normal, normal_dev_infos);
-		// TODO: Use Macro or other method not to use magic number
-		normal_dev_infos.erase(normal_dev_infos.begin(), normal_dev_infos.begin() + 4);
-
-		double ave_xx = 0, ave_yy = 0, ave_zz = 0;
-		for(auto itr: normal_dev_infos)
-		{
-			ave_xx += itr.normal[0];
-			ave_yy += itr.normal[1];
-			ave_zz += itr.normal[2];
-		}
-		double plane_bearing = std::atan(ave_zz / ave_xx);
-		plane_candidate_info_ptr->plane.pose.pi4 = plane_bearing;
-
+		calc_refined_average_normal(normalized_normals, average_normal, plane_candidate_info_ptr->plane.pose);
 		calc_plane_3d_position_on_camera_coordinate(pointcloud2_ptr, *plane_candidate_info_ptr);
-		//ROS_INFO("[%d]%+3.3lf[deg] %+3.3lf[deg] %lf %lf", plane_index, RAD2DEG(yaw_angle), RAD2DEG(yaw_angle_), ave_xx, ave_yy);
-		ROS_INFO("[%d]%+3.3lf[deg] %lf %lf", plane_index, RAD2DEG(plane_bearing), ave_xx, ave_zz);
 #ifdef DEBUG
+		double plane_bearing = std::atan(plane_candidate_info_ptr->plane.pose.pi3 / plane_candidate_info_ptr->plane.pose.pi1);
+		ROS_INFO("[%d]%+3.3lf[deg] %lf %lf", plane_index, RAD2DEG(plane_bearing), ave_xx, ave_zz);
 		{
 			double ax = 0, ay = 0, az = 0;
 			for(auto itr_: normal_dev_infos)
