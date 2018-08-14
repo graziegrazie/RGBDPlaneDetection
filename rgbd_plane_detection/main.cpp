@@ -332,6 +332,46 @@ Result sort_normals_with_deviation(std::vector<Eigen::Vector3d>& normalized_norm
 }
 
 /*
+ * @brief
+ * @param[in]  pointcloud2_ptr
+ * @param[in]  plane_candidate_info
+ * @param[out] normalized_normals
+ * @param[out] average_normal
+ */
+Result calc_normal_candidates_and_average_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, 
+										 		 PlaneCandidateInfo& plane_candidate_info,
+												 std::vector<Eigen::Vector3d>& normalized_normals,
+												 Eigen::Vector3d& average_normal)
+{
+	Result result = Succeeded;
+
+	for(int l = 0; l < NUM_OF_NORMAL_VECTOR; l++)
+	{
+		Eigen::Vector3d normalized_normal;
+
+		calc_plane_normal(pointcloud2_ptr, plane_candidate_info, normalized_normal);
+		if( IS_NAN_FOR_POINT(normalized_normal) )
+		{
+			continue;
+		}
+		else
+		{
+			normalized_normals.push_back( normalized_normal );
+
+			// INFO: This line assumes that normalized normal must be detected at 10 times.
+			average_normal[0] += normalized_normal[0];
+			average_normal[1] += normalized_normal[1];
+			average_normal[2] += normalized_normal[2];
+		}
+	}
+	average_normal[0] /= normalized_normals.size();
+	average_normal[1] /= normalized_normals.size();
+	average_normal[2] /= normalized_normals.size();
+
+	return result;
+}
+
+/*
  * @brief This function assumes that plane is orhogonal to floor, and some points on plane center column have segmented.
  */
 Result calc_plane_3d_position_on_camera_coordinate(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, PlaneCandidateInfo& plane_candidate_info)
@@ -397,39 +437,16 @@ Result calc_plane_2d_coordinate_on_camera_coordinate(const sensor_msgs::PointClo
 
 	for(unsigned char plane_index = 0; plane_index < plane_candidate_info.size() ; plane_index++)
 	{
+		PlaneCandidateInfo* plane_candidate_info_ptr = &(plane_candidate_info[plane_index]);
 		std::vector<Eigen::Vector3d> normalized_normals;
-		double ave_x = 0, ave_y = 0, ave_z = 0;
+		Eigen::Vector3d average_normal;
 
-		for(int l = 0; l < NUM_OF_NORMAL_VECTOR; l++)
-		{
-			Eigen::Vector3d normalized_normal;
-
-			calc_plane_normal(pointcloud2_ptr, plane_candidate_info[plane_index], normalized_normal);
-
-			if( IS_NAN_FOR_POINT(normalized_normal) )
-			{
-				continue;
-			}
-			else
-			{
-				normalized_normals.push_back( normalized_normal );
-
-				// INFO: This line assumes that normalized normal must be detected at 10 times.
-				ave_x += normalized_normal[0];
-				ave_y += normalized_normal[1];
-				ave_z += normalized_normal[2];
-			}
-		}
-		ave_x /= normalized_normals.size();
-		ave_y /= normalized_normals.size();
-		ave_z /= normalized_normals.size();
-
-		Eigen::Vector3d average_normal; average_normal << ave_x, ave_y, ave_z;
+		calc_normal_candidates_and_average_normal(pointcloud2_ptr, *plane_candidate_info_ptr, normalized_normals, average_normal);
 		if( IS_NAN_FOR_POINT(average_normal) )
 		{
-			plane_candidate_info[plane_index].plane.pose.pi1 = std::numeric_limits<double>::quiet_NaN();
-			plane_candidate_info[plane_index].plane.pose.pi2 = std::numeric_limits<double>::quiet_NaN();
-			plane_candidate_info[plane_index].plane.pose.pi3 = std::numeric_limits<double>::quiet_NaN();
+			plane_candidate_info_ptr->plane.pose.pi1 = std::numeric_limits<double>::quiet_NaN();
+			plane_candidate_info_ptr->plane.pose.pi2 = std::numeric_limits<double>::quiet_NaN();
+			plane_candidate_info_ptr->plane.pose.pi3 = std::numeric_limits<double>::quiet_NaN();
 
 			continue;
 		}
@@ -451,9 +468,9 @@ Result calc_plane_2d_coordinate_on_camera_coordinate(const sensor_msgs::PointClo
 			ave_zz += itr.normal[2];
 		}
 		double plane_bearing = std::atan(ave_zz / ave_xx);
-		plane_candidate_info[plane_index].plane.pose.pi4 = plane_bearing;
+		plane_candidate_info_ptr->plane.pose.pi4 = plane_bearing;
 
-		calc_plane_3d_position_on_camera_coordinate(pointcloud2_ptr, plane_candidate_info[plane_index]);
+		calc_plane_3d_position_on_camera_coordinate(pointcloud2_ptr, *plane_candidate_info_ptr);
 		//ROS_INFO("[%d]%+3.3lf[deg] %+3.3lf[deg] %lf %lf", plane_index, RAD2DEG(yaw_angle), RAD2DEG(yaw_angle_), ave_xx, ave_yy);
 		ROS_INFO("[%d]%+3.3lf[deg] %lf %lf", plane_index, RAD2DEG(plane_bearing), ave_xx, ave_zz);
 #ifdef DEBUG
