@@ -32,6 +32,7 @@ image_transport::Publisher pub;
 #define MAX_FIND_POINT_ITERATION				(100)
 #define NUM_OF_NORMAL_VECTOR					(10)
 #define NUM_OF_POINTS_FOR_NORMAL_CALCULATION	(20)
+#define NUM_OF_POINTS_FOR_CENTER_CALCULATION	(10)
 
 struct normal_dev_info
 {
@@ -340,22 +341,19 @@ Result calc_plane_3d_position_on_camera_coordinate(const sensor_msgs::PointCloud
 	std::mt19937 mt{ std::random_device{}() };
 	std::uniform_real_distribution<double> dist(0, 1);
 
-	int plane_width      = plane_candidate_info.plane.info.width;
 	int plane_height     = plane_candidate_info.plane.info.height;
-	int plane_top_left_x = plane_candidate_info.top_left_pose.x;
 	int plane_top_left_y = plane_candidate_info.top_left_pose.y;
 
-	Eigen::Vector2i pose((plane_width / 2.0 + plane_top_left_x), 0);
-	double ave_x = 0, ave_y = 0, ave_z = 0;
+	Eigen::Vector2i pose((plane_candidate_info.plane.info.width / 2.0) + plane_candidate_info.top_left_pose.x, 0);
+	double average_distance = 0.0;
 	unsigned int num_of_detected_points = 0;
 
-	for(int i = 0; i <= 10; i++)
+	for(int i = 0; i <= NUM_OF_POINTS_FOR_CENTER_CALCULATION; i++)
 	{
 		Eigen::Vector3d point;
-		pose[1] = dist(mt) * plane_height + plane_top_left_y;
 
-		// Enter the pose on plane center column
-		get_3d_point_from_pointcloud2(pointcloud2_ptr, pose, point);
+		pose[1] = dist(mt) * plane_height + plane_top_left_y;
+		get_3d_point_from_pointcloud2(pointcloud2_ptr, pose, point); // Enter the pose on plane center column
 		if(IS_NAN_FOR_POINT(point))
 		{
 			// no operation
@@ -376,13 +374,10 @@ Result calc_plane_3d_position_on_camera_coordinate(const sensor_msgs::PointCloud
 	}
 	else
 	{
-		result = Succeeded;
-
 		plane_candidate_info.plane.pose.pi1 = ave_x / num_of_detected_points;
 		plane_candidate_info.plane.pose.pi2 = ave_y / num_of_detected_points;
 		plane_candidate_info.plane.pose.pi3 = ave_z / num_of_detected_points;
 	}
-
 	return result;
 }
 
