@@ -28,6 +28,7 @@ PlaneDetection plane_detection;
 image_transport::Publisher pub;
 
 //#define DEBUG
+#define DEBUG_VIEW
 #define MAX_FIND_POINT_ITERATION				(100)
 #define NUM_OF_NORMAL_VECTOR					(10)
 #define NUM_OF_POINTS_FOR_NORMAL_CALCULATION	(20)
@@ -146,7 +147,11 @@ Result separate_region(const cv::Mat& img, std::vector<PlaneCandidateInfo>& plan
 			approxPolyDP( contours[j], contours_poly[j], 3, true );
 			temp_rect = boundingRect( contours_poly[j] );
 
-			if(biggest_rect.area() < temp_rect.area())
+			if(temp_rect.area() < AREA_THRESHOLD)
+			{
+				continue;
+			}
+			else if(biggest_rect.area() < temp_rect.area())
 			{
 				biggest_rect       = temp_rect;
 			}
@@ -155,6 +160,16 @@ Result separate_region(const cv::Mat& img, std::vector<PlaneCandidateInfo>& plan
 				// no operation
 			}
 		}
+
+		if(biggest_rect.area() < AREA_THRESHOLD)
+		{
+			continue;
+		}
+		else
+		{
+			// no operation
+		}
+		
 		temp_plane_candidate_info.plane.header.frame_id = "/xtion_link";
 		temp_plane_candidate_info.plane.info.id         = i;
 		temp_plane_candidate_info.plane.info.width      = biggest_rect.width;
@@ -168,7 +183,7 @@ Result separate_region(const cv::Mat& img, std::vector<PlaneCandidateInfo>& plan
 
 		plane_candidate_info.push_back(temp_plane_candidate_info);
 
-#ifdef DEBUG
+#ifdef DEBUG_VIEW
 		Scalar color = Scalar( rng.uniform(0, 256), rng.uniform(0,256), rng.uniform(0,256) );
 		rectangle( temp_plane_candidate_info.img, biggest_rect.tl(), biggest_rect.br(), color, 2 );
 
@@ -206,9 +221,7 @@ Result find_white_point(PlaneCandidateInfo& plane_candidate_info, Eigen::Vector2
 		int py = dist(mt) * plane_height + plane_top_left_y;
 
 		Vec3b *src = plane_candidate_info.img.ptr<cv::Vec3b>(py); // Pointer to 1st element on Jth row.
-		if(white_color[0] == src[px][0] && 
-		   white_color[1] == src[px][1] &&
-		   white_color[2] == src[px][2])
+		if(IS_WHITE_PIEXL(src[px]))
 		{
 			pose[0] = px;
 			pose[1] = py;
@@ -229,7 +242,6 @@ Result find_white_point(PlaneCandidateInfo& plane_candidate_info, Eigen::Vector2
 	return result;
 }
 
-//Result get_3d_point_from_pointcloud2(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, cv::Vec2i& pose, cv::Vec3f& point)
 Result get_3d_point_from_pointcloud2(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, Eigen::Vector2i& pose, Eigen::Vector3d& point)
 {
 	Result result = Succeeded;
@@ -261,30 +273,6 @@ Result get_3d_point_from_pointcloud2(const sensor_msgs::PointCloud2ConstPtr& poi
 	point[0] = x;
 	point[1] = y;
 	point[2] = z;
-
-	return result;
-}
-
-Result check_3points_distance(cv::Vec2i& pose1, cv::Vec2i& pose2, cv::Vec2i& pose3)
-{
-	Result result = Succeeded;
-
-	if(CHECK_RANGE_INCL_EQUAL(pose1[0] - pose2[0], 10) || CHECK_RANGE_INCL_EQUAL(pose1[1] - pose2[1], 10))
-	{
-		result = TooClose;
-	}
-	else if(CHECK_RANGE_INCL_EQUAL(pose2[0] - pose3[0], 10) || CHECK_RANGE_INCL_EQUAL(pose2[1] - pose3[1], 10))
-	{
-		result = TooClose;
-	}
-	else if(CHECK_RANGE_INCL_EQUAL(pose3[0] - pose1[0], 10) || CHECK_RANGE_INCL_EQUAL(pose3[1] - pose1[1], 10))
-	{
-		result = TooClose;
-	}
-	else // enough far among 3 points
-	{
-		result = Succeeded;
-	}
 
 	return result;
 }
@@ -343,9 +331,65 @@ Result sort_normals_with_deviation(std::vector<Eigen::Vector3d>& normalized_norm
 }
 
 /*
+ * @brief This function assumes that plane is orhogonal to floor, and some points on plane center column have segmented.
+ */
+Result calc_plane_3d_position_on_camera_coordinate(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, PlaneCandidateInfo& plane_candidate_info)
+{
+	Result result = Succeeded;
+
+	std::mt19937 mt{ std::random_device{}() };
+	std::uniform_real_distribution<double> dist(0, 1);
+
+	int plane_width      = plane_candidate_info.plane.info.width;
+	int plane_height     = plane_candidate_info.plane.info.height;
+	int plane_top_left_x = plane_candidate_info.top_left_pose.x;
+	int plane_top_left_y = plane_candidate_info.top_left_pose.y;
+
+	Eigen::Vector2i pose((plane_width / 2.0 + plane_top_left_x), 0);
+	double ave_x = 0, ave_y = 0, ave_z = 0;
+	unsigned int num_of_detected_points = 0;
+
+	for(int i = 0; i <= 10; i++)
+	{
+		Eigen::Vector3d point;
+		pose[1] = dist(mt) * plane_height + plane_top_left_y;
+
+		// Enter the pose on plane center column
+		get_3d_point_from_pointcloud2(pointcloud2_ptr, pose, point);
+		if(IS_NAN_FOR_POINT(point))
+		{
+			// no operation
+		}
+		else
+		{
+			ave_x += point[0];
+			ave_y += point[1];
+			ave_z += point[2];
+
+			num_of_detected_points++;
+		}
+	}
+
+	if(0 == num_of_detected_points)
+	{
+		result = Failure;
+	}
+	else
+	{
+		result = Succeeded;
+
+		plane_candidate_info.plane.pose.pi1 = ave_x / num_of_detected_points;
+		plane_candidate_info.plane.pose.pi2 = ave_y / num_of_detected_points;
+		plane_candidate_info.plane.pose.pi3 = ave_z / num_of_detected_points;
+	}
+
+	return result;
+}
+
+/*
  * @brief This function estimate plane normal vector. The function resolves least square problem with SVD.
  */
-Result calc_plane_orientation(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, std::vector<PlaneCandidateInfo>& plane_candidate_info)
+Result calc_plane_2d_coordinate_on_camera_coordinate(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, std::vector<PlaneCandidateInfo>& plane_candidate_info)
 {
 	Result result = Succeeded;
 
@@ -371,32 +415,57 @@ Result calc_plane_orientation(const sensor_msgs::PointCloud2ConstPtr& pointcloud
 			Eigen::Vector3d normalized_normal;
 
 			calc_plane_normal(pointcloud2_ptr, plane_candidate_info[plane_index], normalized_normal);
-			normalized_normals.push_back( normalized_normal );
 
-			// INFO: This line assumes that normalized normal must be detected at 10 times.
-			ave_x += normalized_normal[0];
-			ave_y += normalized_normal[1];
-			ave_z += normalized_normal[2];
+			if( IS_NAN_FOR_POINT(normalized_normal) )
+			{
+				continue;
+			}
+			else
+			{
+				normalized_normals.push_back( normalized_normal );
+
+				// INFO: This line assumes that normalized normal must be detected at 10 times.
+				ave_x += normalized_normal[0];
+				ave_y += normalized_normal[1];
+				ave_z += normalized_normal[2];
+			}
 		}
 		ave_x /= normalized_normals.size();
 		ave_y /= normalized_normals.size();
 		ave_z /= normalized_normals.size();
 
 		Eigen::Vector3d average_normal; average_normal << ave_x, ave_y, ave_z;
+		if( IS_NAN_FOR_POINT(average_normal) )
+		{
+			plane_candidate_info[plane_index].plane.pose.pi1 = std::numeric_limits<double>::quiet_NaN();
+			plane_candidate_info[plane_index].plane.pose.pi2 = std::numeric_limits<double>::quiet_NaN();
+			plane_candidate_info[plane_index].plane.pose.pi3 = std::numeric_limits<double>::quiet_NaN();
+
+			continue;
+		}
+		else
+		{
+			// no operation
+		}
 
 		std::vector<normal_dev_info> normal_dev_infos;
 		sort_normals_with_deviation(normalized_normals, average_normal, normal_dev_infos);
+		// TODO: Use Macro or other method not to use magic number
 		normal_dev_infos.erase(normal_dev_infos.begin(), normal_dev_infos.begin() + 4);
 
 		double ave_xx = 0, ave_yy = 0, ave_zz = 0;
 		for(auto itr: normal_dev_infos)
 		{
-			Eigen::Vector3d temp = itr.normal;
-			ave_xx += temp[0];
-			ave_yy += temp[1];
+			ave_xx += itr.normal[0];
+			ave_yy += itr.normal[1];
+			ave_zz += itr.normal[2];
 		}
-		double yaw_angle = std::atan(ave_yy / ave_xx);
-		plane_candidate_info[plane_index].plane.pose.pi3 = yaw_angle;
+		double plane_bearing = std::atan(ave_zz / ave_xx);
+		plane_candidate_info[plane_index].plane.pose.pi4 = plane_bearing;
+
+		calc_plane_3d_position_on_camera_coordinate(pointcloud2_ptr, plane_candidate_info[plane_index]);
+		//ROS_INFO("[%d]%+3.3lf[deg] %+3.3lf[deg] %lf %lf", plane_index, RAD2DEG(yaw_angle), RAD2DEG(yaw_angle_), ave_xx, ave_yy);
+		ROS_INFO("[%d]%+3.3lf[deg] %lf %lf", plane_index, RAD2DEG(plane_bearing), ave_xx, ave_zz);
 #ifdef DEBUG
 		{
 			double ax = 0, ay = 0, az = 0;
@@ -429,10 +498,25 @@ Result calc_plane_orientation(const sensor_msgs::PointCloud2ConstPtr& pointcloud
 	return result;
 }
 
+Result extract_walls_from_candidate(std::vector<PlaneCandidateInfo> plane_candidate_info, std::vector<PlaneCandidateInfo>& wall_info)
+{
+	Result result = Succeeded;
+
+	for(auto itr: plane_candidate_info)
+	{
+		if( IS_NAN_FOR_4D_POINT(itr.plane.pose) )
+		{
+			continue;
+		}
+	}
+
+	return result;
+}
+
 void callback(const sensor_msgs::ImageConstPtr& depth_ptr, const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr)
 {
 	std::vector<cv::Mat> out_imgs;
-	std::vector<PlaneCandidateInfo> plane_candidate_info;
+	std::vector<PlaneCandidateInfo> plane_candidate_info, wall_info;
 
 	if(nullptr == depth_ptr )
 	{
@@ -448,7 +532,9 @@ void callback(const sensor_msgs::ImageConstPtr& depth_ptr, const sensor_msgs::Po
 	pub.publish(*img_ptr);
 
 	separate_region(plane_detection.seg_img_, plane_candidate_info);
-	calc_plane_orientation(pointcloud2_ptr, plane_candidate_info);
+	calc_plane_2d_coordinate_on_camera_coordinate(pointcloud2_ptr, plane_candidate_info);
+	// TODO: some plane has NaN coordinate. Please remove such element in plane_candidate_info
+	extract_walls_from_candidate(plane_candidate_info, wall_info);
 }
 /*****************************************************************************************************************************************/
 int main(int argc, char** argv)

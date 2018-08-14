@@ -23,8 +23,6 @@ const unsigned char default_colors[10][3] =
 };
 std::vector<cv::Scalar> colors;
 
-cv::Vec3b white_color(255, 255, 255);
-
 using PlaneCandidateInfo = struct PlaneCandidateInfo_
 {
 	cv::Mat               img;
