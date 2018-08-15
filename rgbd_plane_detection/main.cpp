@@ -21,6 +21,7 @@
 #include <geometry_msgs/Point.h>
 #include <Eigen/Dense>
 #include <algorithm>
+#include <ros/assert.h>
 
 using namespace cv;
 
@@ -28,7 +29,7 @@ PlaneDetection plane_detection;
 image_transport::Publisher pub;
 
 //#define DEBUG
-#define DEBUG_VIEW
+//#define DEBUG_VIEW
 #define MAX_FIND_POINT_ITERATION				(100)
 #define NUM_OF_NORMAL_VECTOR					(10)
 #define NUM_OF_POINTS_FOR_NORMAL_CALCULATION	(20)
@@ -119,8 +120,8 @@ Result separate_region(const cv::Mat& img, std::vector<PlaneCandidateInfo>& plan
 	Result result = Succeeded;
 
 	RNG rng(12345);
-	ROS_ASSERT_MSG(nullptr == &img,      "null image is passed as img");
-	ROS_ASSERT_MSG(nullptr == &out_imgs, "null image is passed as out_imgs");
+	ROS_ASSERT_MSG(nullptr != &img,                  "null image is passed as img");
+	ROS_ASSERT_MSG(nullptr != &plane_candidate_info, "null image is passed as plane_candidate_info");
 
 	for(int i = 0; i < colors.size(); i++)
 	{
@@ -420,6 +421,9 @@ Result calc_refined_average_normal(std::vector<Eigen::Vector3d>& normalized_norm
 {
 	Result result = Succeeded;
 
+	ROS_ASSERT_MSG(0 != (int)normalized_normals.size(), "normalized_normal has no members");
+	ROS_ASSERT_MSG(nullptr != &plane_pose,              "plane_pose is null");
+
 	std::vector<normal_dev_info> normal_dev_infos;
 	sort_normals_with_deviation(normalized_normals, average_normal, normal_dev_infos);
 	// TODO: Use Macro or other method not to use magic number
@@ -434,7 +438,7 @@ Result calc_refined_average_normal(std::vector<Eigen::Vector3d>& normalized_norm
 	plane_pose.pi1 /= normal_dev_infos.size();
 	plane_pose.pi2 /= normal_dev_infos.size();
 	plane_pose.pi3 /= normal_dev_infos.size();
-
+	
 	return result;
 }
 
@@ -445,7 +449,7 @@ Result calc_plane_2d_coordinate_on_camera_coordinate(const sensor_msgs::PointClo
 {
 	Result result = Succeeded;
 
-	ROS_ASSERT_MSG(nullptr == pointcloud2_ptr,        "null pointcloud2 is entered");
+	ROS_ASSERT_MSG(nullptr != pointcloud2_ptr,        "null pointcloud2 is entered");
 
 	if(0 == plane_candidate_info.size())
 	{
@@ -466,6 +470,17 @@ Result calc_plane_2d_coordinate_on_camera_coordinate(const sensor_msgs::PointClo
 		calc_normal_candidates_and_average_normal(pointcloud2_ptr, *plane_candidate_info_ptr, normalized_normals, average_normal);
 		if( IS_NAN_FOR_POINT(average_normal) )
 		{
+			// for remove this plane from candidate
+			plane_candidate_info_ptr->plane.pose.pi1 = std::numeric_limits<double>::quiet_NaN();
+			plane_candidate_info_ptr->plane.pose.pi2 = std::numeric_limits<double>::quiet_NaN();
+			plane_candidate_info_ptr->plane.pose.pi3 = std::numeric_limits<double>::quiet_NaN();
+			plane_candidate_info_ptr->plane.pose.pi4 = std::numeric_limits<double>::quiet_NaN();
+
+			continue;
+		}
+		else if( 0 == normalized_normals.size() )
+		{
+			// for remove this plane from candidate
 			plane_candidate_info_ptr->plane.pose.pi1 = std::numeric_limits<double>::quiet_NaN();
 			plane_candidate_info_ptr->plane.pose.pi2 = std::numeric_limits<double>::quiet_NaN();
 			plane_candidate_info_ptr->plane.pose.pi3 = std::numeric_limits<double>::quiet_NaN();
@@ -477,6 +492,7 @@ Result calc_plane_2d_coordinate_on_camera_coordinate(const sensor_msgs::PointClo
 		{
 			// no operation
 		}
+		
 		calc_refined_average_normal(normalized_normals, average_normal, plane_candidate_info_ptr->plane.pose);
 		calc_plane_3d_position_on_camera_coordinate(pointcloud2_ptr, *plane_candidate_info_ptr);
 #ifdef DEBUG
