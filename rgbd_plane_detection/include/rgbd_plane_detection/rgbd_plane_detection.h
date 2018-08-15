@@ -29,3 +29,8 @@ using PlaneCandidateInfo = struct PlaneCandidateInfo_
 	geometry_msgs::Pose2D top_left_pose;
 	plane_msgs::Plane     plane;
 };
+
+#define FILL_PLANE_POSE_WITH_NAN(pose)			{pose.pi1 = std::numeric_limits<double>::quiet_NaN();\
+												 pose.pi2 = std::numeric_limits<double>::quiet_NaN();\
+												 pose.pi3 = std::numeric_limits<double>::quiet_NaN();\
+												 pose.pi4 = std::numeric_limits<double>::quiet_NaN();}

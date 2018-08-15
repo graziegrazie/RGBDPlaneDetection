@@ -438,7 +438,7 @@ Result calc_refined_average_normal(std::vector<Eigen::Vector3d>& normalized_norm
 	plane_pose.pi1 /= normal_dev_infos.size();
 	plane_pose.pi2 /= normal_dev_infos.size();
 	plane_pose.pi3 /= normal_dev_infos.size();
-	
+
 	return result;
 }
 
@@ -471,21 +471,13 @@ Result calc_plane_2d_coordinate_on_camera_coordinate(const sensor_msgs::PointClo
 		if( IS_NAN_FOR_POINT(average_normal) )
 		{
 			// for remove this plane from candidate
-			plane_candidate_info_ptr->plane.pose.pi1 = std::numeric_limits<double>::quiet_NaN();
-			plane_candidate_info_ptr->plane.pose.pi2 = std::numeric_limits<double>::quiet_NaN();
-			plane_candidate_info_ptr->plane.pose.pi3 = std::numeric_limits<double>::quiet_NaN();
-			plane_candidate_info_ptr->plane.pose.pi4 = std::numeric_limits<double>::quiet_NaN();
-
+			FILL_PLANE_POSE_WITH_NAN(plane_candidate_info_ptr->plane.pose);
 			continue;
 		}
 		else if( 0 == normalized_normals.size() )
 		{
 			// for remove this plane from candidate
-			plane_candidate_info_ptr->plane.pose.pi1 = std::numeric_limits<double>::quiet_NaN();
-			plane_candidate_info_ptr->plane.pose.pi2 = std::numeric_limits<double>::quiet_NaN();
-			plane_candidate_info_ptr->plane.pose.pi3 = std::numeric_limits<double>::quiet_NaN();
-			plane_candidate_info_ptr->plane.pose.pi4 = std::numeric_limits<double>::quiet_NaN();
-
+			FILL_PLANE_POSE_WITH_NAN(plane_candidate_info_ptr->plane.pose);
 			continue;
 		}
 		else
@@ -546,6 +538,8 @@ Result extract_walls_from_candidate(std::vector<PlaneCandidateInfo> plane_candid
 
 void callback(const sensor_msgs::ImageConstPtr& depth_ptr, const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr)
 {
+	ROS_INFO("callback called");
+
 	std::vector<cv::Mat> out_imgs;
 	std::vector<PlaneCandidateInfo> plane_candidate_info, wall_info;
 
@@ -575,25 +569,11 @@ int main(int argc, char** argv)
     ros::NodeHandle nh;
 	image_transport::ImageTransport it(nh);
 
-	//printUsage();
-
 	for(int i=0; i<10; ++i) {
 		colors.push_back(Scalar(default_colors[i][0], default_colors[i][1], default_colors[i][2]));
 	}
 
-	//image_transport::Subscriber sub1 = it.subscribe ("color", 1, &PlaneDetection::readColorImage, &plane_detection);
-	//image_transport::Subscriber sub2 = it.subscribe ("depth", 1, &PlaneDetection::readDepthImage, &plane_detection);
-
-
-	//ros::Subscriber sub_info = nh.subscribe ("/camera/color/camera_info", 1, cameraInfoCallback);
-	//ros::Publisher pub_info = nh.advertise<sensor_msgs::CameraInfo>("/camera/plane_detection/camera_info", 1);
-	// sensor_msgs::CameraInfo info;
-
-	//image_transport::Publisher pub = it.advertise ("/RGBDPlaneDetection/result_image", 1);
-	//sensor_msgs::ImagePtr msg;
-	pub = it.advertise ("/RGBDPlaneDetection/result_image", 1);
-
-	//message_filters::Subscriber<sensor_msgs::Image> color_sub(nh, "color", 1);
+#if 1
 	message_filters::Subscriber<sensor_msgs::Image>       depth_sub(nh, "depth", 1);
 	message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud2_sub(nh, "pointcloud2", 1);
 
@@ -601,14 +581,18 @@ int main(int argc, char** argv)
  	 // ExactTime takes a queue size as its constructor argument, hence MySyncPolicy(10)
   	message_filters::Synchronizer<MySyncPolicy> sync(MySyncPolicy(10), depth_sub, pointcloud2_sub);
   	sync.registerCallback(boost::bind(&callback, _1, _2));
-  		
+#else
+	image_transport::Subscriber sub = it.subscribe ("depth", 1, &PlaneDetection::readDepthImage, &plane_detection);
+	image_transport::Publisher  pub = it.advertise ("/RGBDPlaneDetection/result_image", 1);
+	sensor_msgs::ImagePtr msg;
+
 	ros::Rate loop_rate(30);
   	while (nh.ok()) {
     	ros::spinOnce();
     	loop_rate.sleep();
 
-/*
 		msg = plane_detection.runPlaneDetection();
+		/*
 		if (run_mrf)
 		{
 			msg = plane_detection.prepareForMRF();
@@ -618,8 +602,9 @@ int main(int argc, char** argv)
 		{
 			// no operation
 		}
+		*/
     	pub.publish(msg);
-*/
+#endif
   	}
 	
 	return 0;
