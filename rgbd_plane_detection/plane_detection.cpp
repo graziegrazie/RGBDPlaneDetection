@@ -93,11 +93,13 @@ void PlaneDetection::readDepthImage(const sensor_msgs::ImageConstPtr& depth_msg)
 	}
 	int rows = depth_img.rows, cols = depth_img.cols;
 	int vertex_idx = 0;
+	unsigned short* image_row;
 	for (int i = 0; i < rows; ++i)
 	{
+		image_row = depth_img.ptr<unsigned short>(i);
 		for (int j = 0; j < cols; ++j)
 		{
-			double z = (double)(depth_img.at<unsigned short>(i, j)) / kScaleFactor;
+			double z = (double)image_row[j] / kScaleFactor;
 #if defined(_WIN32) || defined(_WIN64)
 			if (_isnan(z))
 #elif __linux__
@@ -117,19 +119,28 @@ void PlaneDetection::readDepthImage(const sensor_msgs::ImageConstPtr& depth_msg)
 }
 
 auto PlaneDetection::runPlaneDetection() -> sensor_msgs::ImagePtr
-//void PlaneDetection::runPlaneDetection()
 {
 	bool run_mrf = false;
 	seg_img_ = cv::Mat(kDepthHeight, kDepthWidth, CV_8UC3);
 	plane_filter.run(&cloud, &plane_vertices_, &seg_img_, nullptr, false);
 	plane_num_ = (int)plane_vertices_.size();
 
+	cv::Mat membership_img = plane_filter.membershipImg;
+	int* image_row;
+
 	// Here we set the plane index of a pixel which does NOT belong to any plane as #planes.
 	// This is for using MRF optimization later.
 	for (int row = 0; row < kDepthHeight; ++row)
+	{
 		for (int col = 0; col < kDepthWidth; ++col)
-			if (plane_filter.membershipImg.at<int>(row, col) < 0)
-				plane_filter.membershipImg.at<int>(row, col) = plane_num_;
+		{
+			image_row = membership_img.ptr<int>(row);
+			if (image_row[col] < 0)
+			{
+				image_row[col] = plane_num_;
+			}
+		}
+	}
 	computePlaneSumStats(run_mrf);
 
 	sensor_msgs::ImagePtr out_msg=cv_bridge::CvImage(std_msgs::Header(), "bgr8", seg_img_).toImageMsg();
@@ -275,22 +286,22 @@ void PlaneDetection::writePlaneDataFile(string filename, bool run_mrf /* = false
 void PlaneDetection::computePlaneSumStats(bool run_mrf /* = false */)
 {
 	sum_stats_.resize(plane_num_);
+	double v0, v1, v2;
 	for (int pidx = 0; pidx < plane_num_; ++pidx)
 	{
 		for (int i = 0; i < plane_vertices_[pidx].size(); ++i)
 		{
 			int vidx = plane_vertices_[pidx][i];
 			const VertexType& v = cloud.vertices[vidx];
-			sum_stats_[pidx].sx += v[0];		 sum_stats_[pidx].sy += v[1];		  sum_stats_[pidx].sz += v[2];
+			v0 = v[0]; v1 = v[1]; v2 = v[2];
+			sum_stats_[pidx].sx  += v[0];		 sum_stats_[pidx].sy  += v[1];		  sum_stats_[pidx].sz  += v[2];
 			sum_stats_[pidx].sxx += v[0] * v[0]; sum_stats_[pidx].syy += v[1] * v[1]; sum_stats_[pidx].szz += v[2] * v[2];
 			sum_stats_[pidx].sxy += v[0] * v[1]; sum_stats_[pidx].syz += v[1] * v[2]; sum_stats_[pidx].sxz += v[0] * v[2];
 		}
-		plane_pixel_nums_.push_back(int(plane_vertices_[pidx].size()));
-	}
-	for (int pidx = 0; pidx < plane_num_; ++pidx)
-	{
-		int num = plane_pixel_nums_[pidx];
-		sum_stats_[pidx].sx /= num;		sum_stats_[pidx].sy /= num;		sum_stats_[pidx].sz /= num;
+		int num = plane_vertices_[pidx].size();
+		plane_pixel_nums_.push_back(num);
+
+		sum_stats_[pidx].sx  /= num;	sum_stats_[pidx].sy  /= num;	sum_stats_[pidx].sz  /= num;
 		sum_stats_[pidx].sxx /= num;	sum_stats_[pidx].syy /= num;	sum_stats_[pidx].szz /= num;
 		sum_stats_[pidx].sxy /= num;	sum_stats_[pidx].syz /= num;	sum_stats_[pidx].sxz /= num;
 	}

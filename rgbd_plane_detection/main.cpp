@@ -233,6 +233,7 @@ Result find_white_point(PlaneCandidateInfo& plane_candidate_info, Eigen::Vector2
 		else
 		{
 			// keep searching
+			// this is just a temporal value
 			pose[0] = (plane_width  / 2.0) + plane_top_left_x;
 			pose[1] = (plane_height / 2.0) + plane_top_left_y;
 
@@ -565,7 +566,6 @@ void callback(const sensor_msgs::ImageConstPtr& depth_ptr, const sensor_msgs::Po
 	ROS_INFO("callback called");
 
 	std::vector<PlaneCandidateInfo> plane_candidate_info, wall_info;
-
 	if(nullptr == depth_ptr )
 	{
 		ROS_WARN("depth_ptr is null");
@@ -590,10 +590,14 @@ int main(int argc, char** argv)
 	// Initialize ROS
     ros::init (argc, argv, "RGBDPlaneDetection");
     ros::NodeHandle nh;
+
 	for(int i=0; i<10; ++i)
 	{
 		colors.push_back(Scalar(default_colors[i][0], default_colors[i][1], default_colors[i][2]));
 	}
+
+	image_transport::ImageTransport it(nh);
+	pub = it.advertise ("/RGBDPlaneDetection/result_image", 1);
 
 #if 1
 	typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2> SyncPolicy;
@@ -605,7 +609,6 @@ int main(int argc, char** argv)
   	sync.registerCallback(boost::bind(&callback, _1, _2));
 	ros::spin();
 #else
-	image_transport::ImageTransport it(nh);
 	image_transport::Subscriber sub = it.subscribe ("depth", 1, &PlaneDetection::readDepthImage, &plane_detection);
 	image_transport::Publisher  pub = it.advertise ("/RGBDPlaneDetection/result_image", 1);
 	sensor_msgs::ImagePtr msg;
