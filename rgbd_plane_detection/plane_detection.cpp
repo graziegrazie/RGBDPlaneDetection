@@ -130,7 +130,7 @@ auto PlaneDetection::runPlaneDetection() -> sensor_msgs::ImagePtr
 		for (int col = 0; col < kDepthWidth; ++col)
 			if (plane_filter.membershipImg.at<int>(row, col) < 0)
 				plane_filter.membershipImg.at<int>(row, col) = plane_num_;
-	computePlaneSumStats(run_mrf);
+	//computePlaneSumStats(run_mrf);
 
 	sensor_msgs::ImagePtr out_msg=cv_bridge::CvImage(std_msgs::Header(), "bgr8", seg_img_).toImageMsg();
 	return out_msg;
