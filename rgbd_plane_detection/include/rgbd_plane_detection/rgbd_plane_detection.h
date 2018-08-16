@@ -1,10 +1,11 @@
 #pragma once
 
+#include <vector>
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
+#include <Eigen/Dense>
 #include "geometry_msgs/Pose2D.h"
 #include "plane_msgs/Plane.h"
-#include <vector>
 
 #define AREA_THRESHOLD (2000)
 
@@ -34,3 +35,5 @@ using PlaneCandidateInfo = struct PlaneCandidateInfo_
 												 pose.pi2 = std::numeric_limits<double>::quiet_NaN();\
 												 pose.pi3 = std::numeric_limits<double>::quiet_NaN();\
 												 pose.pi4 = std::numeric_limits<double>::quiet_NaN();}
+
+Eigen::Vector3d Z_AXIS(0.0, 0.0, 1.0);

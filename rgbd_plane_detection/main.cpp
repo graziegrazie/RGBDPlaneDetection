@@ -19,7 +19,6 @@
 #include "rgbd_plane_detection/rgbd_plane_detection.h"
 #include "rgbd_plane_detection/rgbd_plane_detection_utils.h"
 #include <geometry_msgs/Point.h>
-#include <Eigen/Dense>
 #include <algorithm>
 #include <ros/assert.h>
 
@@ -525,12 +524,37 @@ Result extract_walls_from_candidate(std::vector<PlaneCandidateInfo> plane_candid
 {
 	Result result = Succeeded;
 
+	ROS_ASSERT(nullptr != plane_candidate_info);
+	ROS_ASSERT(nullptr != wall_info);
+
 	for(auto itr: plane_candidate_info)
 	{
 		if( IS_NAN_FOR_4D_POINT(itr.plane.pose) )
 		{
+			// avoid invalid planes
 			continue;
 		}
+		else
+		{
+			// no operation
+		}
+
+		plane_msgs::PlanePose& plane_pose = itr.plane.pose;
+		Eigen::Vector3d plane_normal(plane_pose.pi1, plane_pose.pi2, plane_pose.pi3);
+
+		ROS_INFO("Plane Nornal:%+1.3lf %+1.3lf %+1.3lf", plane_normal[0], plane_normal[1], plane_normal[2]);
+		// TODO: Magic number should be defind as MACRO!
+		if( CHECK_RANGE_NOT_INCL_EQUAL(Z_AXIS.dot(plane_normal), 0.9) )
+		{
+			// leave the planes perpendicular to floor and ceil.
+			continue;
+		}
+		else
+		{
+			// no operation
+		}
+
+		wall_info.push_back(itr);
 	}
 
 	return result;
@@ -540,7 +564,6 @@ void callback(const sensor_msgs::ImageConstPtr& depth_ptr, const sensor_msgs::Po
 {
 	ROS_INFO("callback called");
 
-	std::vector<cv::Mat> out_imgs;
 	std::vector<PlaneCandidateInfo> plane_candidate_info, wall_info;
 
 	if(nullptr == depth_ptr )
@@ -567,21 +590,22 @@ int main(int argc, char** argv)
 	// Initialize ROS
     ros::init (argc, argv, "RGBDPlaneDetection");
     ros::NodeHandle nh;
-	image_transport::ImageTransport it(nh);
-
-	for(int i=0; i<10; ++i) {
+	for(int i=0; i<10; ++i)
+	{
 		colors.push_back(Scalar(default_colors[i][0], default_colors[i][1], default_colors[i][2]));
 	}
 
 #if 1
+	typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2> SyncPolicy;
 	message_filters::Subscriber<sensor_msgs::Image>       depth_sub(nh, "depth", 1);
 	message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud2_sub(nh, "pointcloud2", 1);
 
-	typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2> MySyncPolicy;
- 	 // ExactTime takes a queue size as its constructor argument, hence MySyncPolicy(10)
-  	message_filters::Synchronizer<MySyncPolicy> sync(MySyncPolicy(10), depth_sub, pointcloud2_sub);
+	// ExactTime takes a queue size as its constructor argument, hence MySyncPolicy(10)
+  	message_filters::Synchronizer<SyncPolicy> sync(SyncPolicy(10), depth_sub, pointcloud2_sub);
   	sync.registerCallback(boost::bind(&callback, _1, _2));
+	ros::spin();
 #else
+	image_transport::ImageTransport it(nh);
 	image_transport::Subscriber sub = it.subscribe ("depth", 1, &PlaneDetection::readDepthImage, &plane_detection);
 	image_transport::Publisher  pub = it.advertise ("/RGBDPlaneDetection/result_image", 1);
 	sensor_msgs::ImagePtr msg;
@@ -604,9 +628,8 @@ int main(int argc, char** argv)
 		}
 		*/
     	pub.publish(msg);
-#endif
   	}
-	
+#endif
 	return 0;
 	
 }
