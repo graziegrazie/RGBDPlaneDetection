@@ -2,6 +2,7 @@
 #include <ros/ros.h>
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/PointCloud2.h>
+#include <sensor_msgs/LaserScan.h>
 #include <image_transport/image_transport.h>
 #include <camera_info_manager/camera_info_manager.h>
 
@@ -21,11 +22,15 @@
 #include <geometry_msgs/Point.h>
 #include <algorithm>
 #include <ros/assert.h>
+#include <sensor_msgs/CameraInfo.h>
+
 
 using namespace cv;
 
 PlaneDetection plane_detection;
 image_transport::Publisher pub;
+ros::Subscriber camera_info_sub;
+Eigen::MatrixXd psuedo_camera_matrix_inverse;
 
 //#define DEBUG
 //#define DEBUG_VIEW
@@ -244,10 +249,15 @@ Result find_white_point(PlaneCandidateInfo& plane_candidate_info, Eigen::Vector2
 	return result;
 }
 
+/*
+ * @brief this function convert the pose in image to point in 3D coordinate.
+ *
+ */
 Result get_3d_point_from_pointcloud2(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, Eigen::Vector2i& pose, Eigen::Vector3d& point)
 {
 	Result result = Succeeded;
 
+	// check if pose is located beyond image and pointcloud region
 	if(pointcloud2_ptr->width <= pose[0] || pointcloud2_ptr->height <= pose[1])
 	{
 		point[0] = std::numeric_limits<double>::quiet_NaN();
@@ -561,7 +571,9 @@ Result extract_walls_from_candidate(std::vector<PlaneCandidateInfo> plane_candid
 	return result;
 }
 
-void callback(const sensor_msgs::ImageConstPtr& depth_ptr, const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr)
+void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
+			  const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr,
+			  const sensor_msgs::LaserScanConstPtr& laserscan_ptr)
 {
 	ROS_INFO("callback called");
 
@@ -582,8 +594,51 @@ void callback(const sensor_msgs::ImageConstPtr& depth_ptr, const sensor_msgs::Po
 	separate_region(plane_detection.seg_img_, plane_candidate_info);
 	calc_plane_2d_coordinate_on_camera_coordinate(pointcloud2_ptr, plane_candidate_info);
 	// TODO: some plane has NaN coordinate. Please remove such element in plane_candidate_info
+	// TODO: consider if divided segments which are contained in same plane should be merged?
 	extract_walls_from_candidate(plane_candidate_info, wall_info);
 }
+
+// from https://robotics.naist.jp/edu/text/?Robotics%2FEigen
+template <typename t_matrix>
+t_matrix PseudoInverse(const t_matrix& m, const double &tolerance=1.e-6)
+{
+  using namespace Eigen;
+  typedef JacobiSVD<t_matrix> TSVD;
+  unsigned int svd_opt(ComputeThinU | ComputeThinV);
+  if(m.RowsAtCompileTime!=Dynamic || m.ColsAtCompileTime!=Dynamic)
+  svd_opt= ComputeFullU | ComputeFullV;
+  TSVD svd(m, svd_opt);
+  const typename TSVD::SingularValuesType &sigma(svd.singularValues());
+  typename TSVD::SingularValuesType sigma_inv(sigma.size());
+  for(long i=0; i<sigma.size(); ++i)
+  {
+    if(sigma(i) > tolerance)
+      sigma_inv(i)= 1.0/sigma(i);
+    else
+      sigma_inv(i)= 0.0;
+  }
+  return svd.matrixV()*sigma_inv.asDiagonal()*svd.matrixU().transpose();
+}
+
+void camera_info_callback(const sensor_msgs::CameraInfoConstPtr& msg)
+{
+	ROS_INFO("camera_info_callback called");
+	ROS_ASSERT(nullptr != msg);
+
+	Eigen::MatrixXd P(3, 4);
+	P(0, 0) = msg->P[0 * 4 + 0]; P(0, 1) = msg->P[0 * 4 + 1]; P(0, 2) = msg->P[0 * 4 + 2]; P(0, 3) = msg->P[0 * 4 + 3];
+	P(1, 0) = msg->P[1 * 4 + 0]; P(1, 1) = msg->P[1 * 4 + 1]; P(1, 2) = msg->P[1 * 4 + 2]; P(1, 3) = msg->P[1 * 4 + 3];
+	P(2, 0) = msg->P[2 * 4 + 0]; P(2, 1) = msg->P[2 * 4 + 1]; P(2, 2) = msg->P[2 * 4 + 2]; P(2, 3) = msg->P[2 * 4 + 3];
+
+	psuedo_camera_matrix_inverse = PseudoInverse(P);
+
+	Eigen::Vector3d p(200, 100, 1);
+	std::cout << psuedo_camera_matrix_inverse * p << std::endl;
+
+	// once store camera information. No longer this callback doesn't need to be called.
+	camera_info_sub.shutdown();
+}
+
 /*****************************************************************************************************************************************/
 int main(int argc, char** argv)
 {
@@ -600,13 +655,18 @@ int main(int argc, char** argv)
 	pub = it.advertise ("/RGBDPlaneDetection/result_image", 1);
 
 #if 1
-	typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2> SyncPolicy;
-	message_filters::Subscriber<sensor_msgs::Image>       depth_sub(nh, "depth", 1);
-	message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud2_sub(nh, "pointcloud2", 1);
+	typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2, sensor_msgs::LaserScan> SyncPolicy;
+	message_filters::Subscriber<sensor_msgs::Image>       depth_sub(nh, "depth", 30);
+	message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud2_sub(nh, "pointcloud2", 4);
+	message_filters::Subscriber<sensor_msgs::LaserScan>   laserscan_sub(nh, "scan", 4);
 
 	// ExactTime takes a queue size as its constructor argument, hence MySyncPolicy(10)
-  	message_filters::Synchronizer<SyncPolicy> sync(SyncPolicy(10), depth_sub, pointcloud2_sub);
-  	sync.registerCallback(boost::bind(&callback, _1, _2));
+  	message_filters::Synchronizer<SyncPolicy> sync(SyncPolicy(10), depth_sub, pointcloud2_sub, laserscan_sub);
+  	sync.registerCallback(boost::bind(&callback, _1, _2, _3));
+
+	//image_transport::Subscriber sub1 = it.subscribe ("depth", 1, &PlaneDetection::readDepthImage, &plane_detection);
+	camera_info_sub = nh.subscribe("/xtion/depth_registered/camera_info", 1, camera_info_callback);
+
 	ros::spin();
 #else
 	image_transport::Subscriber sub = it.subscribe ("depth", 1, &PlaneDetection::readDepthImage, &plane_detection);
