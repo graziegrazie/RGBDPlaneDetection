@@ -531,18 +531,21 @@ Result calc_plane_2d_coordinate_on_camera_coordinate(const sensor_msgs::PointClo
 	return result;
 }
 
-Result extract_walls_from_candidate(std::vector<PlaneCandidateInfo> plane_candidate_info, std::vector<PlaneCandidateInfo>& wall_info)
+Result extract_walls_from_candidate(std::vector<PlaneCandidateInfo> plane_candidate_info)
 {
 	Result result = Succeeded;
 
 	ROS_ASSERT(nullptr != plane_candidate_info);
 	ROS_ASSERT(nullptr != wall_info);
 
-	for(auto itr: plane_candidate_info)
+	//for(auto itr: plane_candidate_info)
+	auto itr = plane_candidate_info.begin();
+	while(itr != plane_candidate_info.end())
 	{
 		if( IS_NAN_FOR_4D_POINT(itr.plane.pose) )
 		{
 			// avoid invalid planes
+			itr = plane_candidate_info.erase(itr);
 			continue;
 		}
 		else
@@ -558,14 +561,14 @@ Result extract_walls_from_candidate(std::vector<PlaneCandidateInfo> plane_candid
 		if( CHECK_RANGE_NOT_INCL_EQUAL(Z_AXIS.dot(plane_normal), 0.9) )
 		{
 			// leave the planes perpendicular to floor and ceil.
+			itr = plane_candidate_info.erase(itr);
 			continue;
 		}
 		else
 		{
 			// no operation
 		}
-
-		wall_info.push_back(itr);
+		itr++;
 	}
 
 	return result;
@@ -638,8 +641,8 @@ void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
 	calc_plane_2d_coordinate_on_camera_coordinate(pointcloud2_ptr, plane_candidate_info);
 	// TODO: some plane has NaN coordinate. Please remove such element in plane_candidate_info
 	// TODO: consider if divided segments which are contained in same plane should be merged?
-	extract_walls_from_candidate(plane_candidate_info, wall_info);
-	refine_scan_with_wall_information(wall_info, laserscan_ptr, refined_scan);
+	extract_walls_from_candidate(plane_candidate_info);
+	refine_scan_with_wall_information(plane_candidate_info, laserscan_ptr, refined_scan);
 }
 
 void camera_info_callback(const sensor_msgs::CameraInfoConstPtr& msg)
