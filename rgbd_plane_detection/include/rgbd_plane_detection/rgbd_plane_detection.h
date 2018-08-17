@@ -26,9 +26,9 @@ std::vector<cv::Scalar> colors;
 
 using PlaneCandidateInfo = struct PlaneCandidateInfo_
 {
-	cv::Mat               img;
-	geometry_msgs::Pose2D top_left_pose;
-	plane_msgs::Plane     plane;
+	cv::Mat           img;
+	cv::Point2d       top_left_pose;
+	plane_msgs::Plane plane;
 };
 
 #define FILL_PLANE_POSE_WITH_NAN(pose)			{pose.pi1 = std::numeric_limits<double>::quiet_NaN();\

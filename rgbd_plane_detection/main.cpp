@@ -23,14 +23,15 @@
 #include <algorithm>
 #include <ros/assert.h>
 #include <sensor_msgs/CameraInfo.h>
-
+#include <image_geometry/pinhole_camera_model.h>
 
 using namespace cv;
 
 PlaneDetection plane_detection;
 image_transport::Publisher pub;
 ros::Subscriber camera_info_sub;
-Eigen::MatrixXd psuedo_camera_matrix_inverse;
+image_geometry::PinholeCameraModel pinhole_camera_model;
+//Eigen::MatrixXd psuedo_camera_matrix_inverse;
 
 //#define DEBUG
 //#define DEBUG_VIEW
@@ -181,10 +182,9 @@ Result separate_region(const cv::Mat& img, std::vector<PlaneCandidateInfo>& plan
 		temp_plane_candidate_info.plane.info.width      = biggest_rect.width;
 		temp_plane_candidate_info.plane.info.height     = biggest_rect.height;
 
-		geometry_msgs::Pose2D temp_pose;
+		cv::Point2d temp_pose;
 		temp_pose.x     = biggest_rect.x;
 		temp_pose.y     = biggest_rect.y;
-		temp_pose.theta = 0.0;
 		temp_plane_candidate_info.top_left_pose = temp_pose;
 
 		plane_candidate_info.push_back(temp_plane_candidate_info);
@@ -385,7 +385,7 @@ Result calc_normal_candidates_and_average_normal(const sensor_msgs::PointCloud2C
 /*
  * @brief This function assumes that plane is orhogonal to floor, and some points on plane center column have segmented.
  */
-Result calc_plane_3d_position_on_camera_coordinate(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, PlaneCandidateInfo& plane_candidate_info)
+Result calc_plane_distance_from_camera(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, PlaneCandidateInfo& plane_candidate_info)
 {
 	Result result = Succeeded;
 
@@ -496,7 +496,7 @@ Result calc_plane_2d_coordinate_on_camera_coordinate(const sensor_msgs::PointClo
 		}
 		
 		calc_refined_average_normal(normalized_normals, average_normal, plane_candidate_info_ptr->plane.pose);
-		calc_plane_3d_position_on_camera_coordinate(pointcloud2_ptr, *plane_candidate_info_ptr);
+		calc_plane_distance_from_camera(pointcloud2_ptr, *plane_candidate_info_ptr);
 #ifdef DEBUG
 		double plane_bearing = std::atan(plane_candidate_info_ptr->plane.pose.pi3 / plane_candidate_info_ptr->plane.pose.pi1);
 		ROS_INFO("[%d]%+3.3lf[deg] %lf %lf", plane_index, RAD2DEG(plane_bearing), ave_xx, ave_zz);
@@ -508,7 +508,7 @@ Result calc_plane_2d_coordinate_on_camera_coordinate(const sensor_msgs::PointClo
 
 				ax = itr[0] / normal_dev_infos.size();
 				ay = itr[1] / normal_dev_infos.size();
-				az = itr[2] / normal_dev_infos.size();	
+				az = itr[2] / normal_dev_infos.size();
 			}
 			double roll  = std::atan(az / ay);
 			double pitch = std::atan(az / ax);
@@ -571,11 +571,30 @@ Result extract_walls_from_candidate(std::vector<PlaneCandidateInfo> plane_candid
 	return result;
 }
 
+Result calc_plane_3d_width_and_height(PlaneCandidateInfo& wall_info)
+{
+	Result result = Succeeded;
+
+	ROS_ASSERT(nullptr != wall_info);
+
+	cv::Point2d temp_right_bottom_2d(wall_info.plane.info.width  + wall_info.top_left_pose.x,
+									 wall_info.plane.info.height + wall_info.top_left_pose.y);
+
+	cv::Point3d left_top     = pinhole_camera_model.projectPixelTo3dRay(wall_info.top_left_pose);
+	cv::Point3d right_bottom = pinhole_camera_model.projectPixelTo3dRay(temp_right_bottom_2d);
+
+	std::cout << wall_info.plane.pose.pi4 << " " << wall_info.plane.pose.pi4 * (right_bottom - left_top) << std::endl;
+																		
+	return result;
+}
+
 void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
 			  const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr,
 			  const sensor_msgs::LaserScanConstPtr& laserscan_ptr)
 {
 	ROS_INFO("callback called");
+
+	sensor_msgs::LaserScan refined_scan;
 
 	std::vector<PlaneCandidateInfo> plane_candidate_info, wall_info;
 	if(nullptr == depth_ptr )
@@ -596,28 +615,7 @@ void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
 	// TODO: some plane has NaN coordinate. Please remove such element in plane_candidate_info
 	// TODO: consider if divided segments which are contained in same plane should be merged?
 	extract_walls_from_candidate(plane_candidate_info, wall_info);
-}
-
-// from https://robotics.naist.jp/edu/text/?Robotics%2FEigen
-template <typename t_matrix>
-t_matrix PseudoInverse(const t_matrix& m, const double &tolerance=1.e-6)
-{
-  using namespace Eigen;
-  typedef JacobiSVD<t_matrix> TSVD;
-  unsigned int svd_opt(ComputeThinU | ComputeThinV);
-  if(m.RowsAtCompileTime!=Dynamic || m.ColsAtCompileTime!=Dynamic)
-  svd_opt= ComputeFullU | ComputeFullV;
-  TSVD svd(m, svd_opt);
-  const typename TSVD::SingularValuesType &sigma(svd.singularValues());
-  typename TSVD::SingularValuesType sigma_inv(sigma.size());
-  for(long i=0; i<sigma.size(); ++i)
-  {
-    if(sigma(i) > tolerance)
-      sigma_inv(i)= 1.0/sigma(i);
-    else
-      sigma_inv(i)= 0.0;
-  }
-  return svd.matrixV()*sigma_inv.asDiagonal()*svd.matrixU().transpose();
+	refine_scan_with_wall_information(wall_info, laserscan_ptr, refined_scan);
 }
 
 void camera_info_callback(const sensor_msgs::CameraInfoConstPtr& msg)
@@ -625,15 +623,7 @@ void camera_info_callback(const sensor_msgs::CameraInfoConstPtr& msg)
 	ROS_INFO("camera_info_callback called");
 	ROS_ASSERT(nullptr != msg);
 
-	Eigen::MatrixXd P(3, 4);
-	P(0, 0) = msg->P[0 * 4 + 0]; P(0, 1) = msg->P[0 * 4 + 1]; P(0, 2) = msg->P[0 * 4 + 2]; P(0, 3) = msg->P[0 * 4 + 3];
-	P(1, 0) = msg->P[1 * 4 + 0]; P(1, 1) = msg->P[1 * 4 + 1]; P(1, 2) = msg->P[1 * 4 + 2]; P(1, 3) = msg->P[1 * 4 + 3];
-	P(2, 0) = msg->P[2 * 4 + 0]; P(2, 1) = msg->P[2 * 4 + 1]; P(2, 2) = msg->P[2 * 4 + 2]; P(2, 3) = msg->P[2 * 4 + 3];
-
-	psuedo_camera_matrix_inverse = PseudoInverse(P);
-
-	Eigen::Vector3d p(200, 100, 1);
-	std::cout << psuedo_camera_matrix_inverse * p << std::endl;
+	pinhole_camera_model.fromCameraInfo(msg);
 
 	// once store camera information. No longer this callback doesn't need to be called.
 	camera_info_sub.shutdown();
@@ -656,13 +646,13 @@ int main(int argc, char** argv)
 
 #if 1
 	typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2, sensor_msgs::LaserScan> SyncPolicy;
-	message_filters::Subscriber<sensor_msgs::Image>       depth_sub(nh, "depth", 30);
-	message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud2_sub(nh, "pointcloud2", 4);
+	message_filters::Subscriber<sensor_msgs::Image>       depth_sub(nh, "depth", 20);
+	message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud2_sub(nh, "pointcloud2", 10);
 	message_filters::Subscriber<sensor_msgs::LaserScan>   laserscan_sub(nh, "scan", 4);
 
 	// ExactTime takes a queue size as its constructor argument, hence MySyncPolicy(10)
   	message_filters::Synchronizer<SyncPolicy> sync(SyncPolicy(10), depth_sub, pointcloud2_sub, laserscan_sub);
-  	sync.registerCallback(boost::bind(&callback, _1, _2, _3));
+	sync.registerCallback(boost::bind(&callback, _1, _2, _3));
 
 	//image_transport::Subscriber sub1 = it.subscribe ("depth", 1, &PlaneDetection::readDepthImage, &plane_detection);
 	camera_info_sub = nh.subscribe("/xtion/depth_registered/camera_info", 1, camera_info_callback);

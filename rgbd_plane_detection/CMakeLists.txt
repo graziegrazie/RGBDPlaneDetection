@@ -35,6 +35,7 @@ find_package(catkin REQUIRED COMPONENTS
   camera_info_manager
   plane_msgs
   geometry_msgs
+  image_geometry
 )
 
 FIND_PACKAGE(Eigen3 REQUIRED)
