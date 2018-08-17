@@ -583,8 +583,32 @@ Result calc_plane_3d_width_and_height(PlaneCandidateInfo& wall_info)
 	cv::Point3d left_top     = pinhole_camera_model.projectPixelTo3dRay(wall_info.top_left_pose);
 	cv::Point3d right_bottom = pinhole_camera_model.projectPixelTo3dRay(temp_right_bottom_2d);
 
-	std::cout << wall_info.plane.pose.pi4 << " " << wall_info.plane.pose.pi4 * (right_bottom - left_top) << std::endl;
-																		
+	cv::Point3d plane_3d_width_and_height = wall_info.plane.pose.pi4 * (right_bottom - left_top);
+
+	wall_info.plane.info_real.width  = plane_3d_width_and_height.x;
+	wall_info.plane.info_real.height = plane_3d_width_and_height.y;
+
+#ifdef DEBUG
+	ROS_INFO("[calc_plane_3d_width_and_height]D = %lf W = %lf H = %lf", wall_info.plane.pose.pi4, plane_3d_width_and_height[0], plane_3d_width_and_height[1]);
+#endif
+
+	return result;
+}
+
+Result refine_scan_with_wall_information(std::vector<PlaneCandidateInfo>& wall_info,
+										 const sensor_msgs::LaserScanConstPtr& original_scan_ptr,
+										 sensor_msgs::LaserScan& refined_scan)
+{
+	Result result = Succeeded;
+	ROS_INFO("refine_scan_with_wall_information called");
+
+	ROS_ASSERT(nullptr != wall_info);
+
+	for(auto itr: wall_info)
+	{
+		calc_plane_3d_width_and_height(itr);
+	}
+
 	return result;
 }
 
