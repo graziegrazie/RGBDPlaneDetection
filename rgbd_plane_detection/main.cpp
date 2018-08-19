@@ -251,13 +251,14 @@ Result get_3d_point_from_pointcloud2(const sensor_msgs::PointCloud2ConstPtr& poi
 	return result;
 }
 
-Result calc_plane_normal_ransac(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, PlaneCandidateInfo& plane_candidate_info, Eigen::Vector3d& normalized_normal)
+/*
+ * @brief this function find white pixels within plane caididate
+ * @param[in]
+ * @param[out] pose		vector contains all white pixel positions within candidate plane region
+ */
+Result get_white_points_from_gray_scale_image(PlaneCandidateInfo& plane_candidate_info, std::vector<Eigen::Vector2i>& poses)
 {
 	Result result = Succeeded;
-
-	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_ (new pcl::PointCloud<pcl::PointXYZ> ());
-	std::vector<int> indices_;
-	std::vector<Eigen::Vector2i> poses;
 
 	int plane_width  = plane_candidate_info.plane.info.width;
 	int plane_height = plane_candidate_info.plane.info.height;
@@ -281,6 +282,19 @@ Result calc_plane_normal_ransac(const sensor_msgs::PointCloud2ConstPtr& pointclo
 			}
 		}
 	}
+	return result;
+}
+
+Result calc_plane_normal_ransac(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, PlaneCandidateInfo& plane_candidate_info)
+{
+	Result result = Succeeded;
+
+	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_ (new pcl::PointCloud<pcl::PointXYZ> ());
+	std::vector<int> indices_;
+	std::vector<Eigen::Vector2i> poses;
+	Eigen::Vector3d normalized_normal(0.0, 0.0, 0.0);
+
+	get_white_points_from_gray_scale_image(plane_candidate_info, poses);
 
 	for(auto itr: poses)
 	{
@@ -303,84 +317,30 @@ Result calc_plane_normal_ransac(const sensor_msgs::PointCloud2ConstPtr& pointclo
 		normalized_normal(0) = std::numeric_limits<double>::quiet_NaN();
 		normalized_normal(1) = std::numeric_limits<double>::quiet_NaN();
 		normalized_normal(2) = std::numeric_limits<double>::quiet_NaN();
-		return Failure;
-	}
-
-	SampleConsensusModelPlanePtr model (new pcl::SampleConsensusModelPlane<pcl::PointXYZ> (cloud_));
-  	// Create the RANSAC object
-	pcl::RandomSampleConsensus<pcl::PointXYZ> sac (model, 0.03);
-	bool ransac_result = sac.computeModel ();
-	Eigen::VectorXf coeff;
-	sac.getModelCoefficients (coeff);
-
-	normalized_normal << coeff[0], coeff[1], coeff[2];
-
-	if(coeff[2] < 0)
-	{
-		ROTATE_180_DEG_AROUND_Y_AXIS(normalized_normal);
 	}
 	else
 	{
-		// no operation
-	}
+		SampleConsensusModelPlanePtr model (new pcl::SampleConsensusModelPlane<pcl::PointXYZ> (cloud_));
+		// Create the RANSAC object
+		pcl::RandomSampleConsensus<pcl::PointXYZ> sac (model, 0.03);
+		bool ransac_result = sac.computeModel ();
+		Eigen::VectorXf coeff;
+		sac.getModelCoefficients (coeff);
 
-	return result;
-}
-
-Result sort_normals_with_deviation(std::vector<Eigen::Vector3d>& normalized_normals, Eigen::Vector3d average_normal, std::vector<normal_dev_info>& normal_dev_infos)
-{
-	Result result = Succeeded;
-
-	double ave_x = average_normal[0];
-	double ave_y = average_normal[1];
-	double ave_z = average_normal[2];
-
-	for(auto itr: normalized_normals)
-	{
-		normal_dev_info temp;
-		temp.normal     = itr;
-		temp.square_dev = std::pow(itr[0] - ave_x, 2) + std::pow(itr[1] - ave_y, 2) + std::pow(itr[2] - ave_z, 2);
-		normal_dev_infos.push_back(temp);
-	}
-	std::sort(normal_dev_infos.begin(), normal_dev_infos.end(), [](normal_dev_info x, normal_dev_info y){return x.square_dev > y.square_dev;});
-
-	return result;
-}
-
-/*
- * @brief
- * @param[in]  pointcloud2_ptr
- * @param[in]  plane_candidate_info
- * @param[out] normalized_normals
- * @param[out] average_normal
- */
-Result calc_normal_candidates_and_average_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, 
-										 		 PlaneCandidateInfo& plane_candidate_info,
-												 std::vector<Eigen::Vector3d>& normalized_normals,
-												 Eigen::Vector3d& average_normal)
-{
-	Result result = Succeeded;
-
-	for(int l = 0; l < NUM_OF_NORMAL_VECTOR; l++)
-	{
-		Eigen::Vector3d normalized_normal;
-
-		calc_plane_normal_ransac(pointcloud2_ptr, plane_candidate_info, normalized_normal);
-		if( IS_NAN_FOR_POINT(normalized_normal) )
+		normalized_normal << coeff[0], coeff[1], coeff[2];
+		if(coeff[2] < 0)
 		{
-			continue;
+			ROTATE_180_DEG_AROUND_Y_AXIS(normalized_normal);
 		}
 		else
 		{
-			normalized_normals.push_back( normalized_normal );
-
-			// INFO: This line assumes that normalized normal must be detected at 10 times.
-			average_normal[0] += normalized_normal[0];
-			average_normal[1] += normalized_normal[1];
-			average_normal[2] += normalized_normal[2];
+			// no operation
 		}
 	}
-	average_normal /= normalized_normals.size();
+
+	plane_candidate_info.plane.pose.pi1 = normalized_normal(0);
+	plane_candidate_info.plane.pose.pi2 = normalized_normal(1);
+	plane_candidate_info.plane.pose.pi3 = normalized_normal(2);
 
 	return result;
 }
@@ -430,40 +390,6 @@ Result calc_plane_distance_from_camera(const sensor_msgs::PointCloud2ConstPtr& p
 	return result;
 }
 
-Result calc_refined_average_normal(std::vector<Eigen::Vector3d>& normalized_normals, Eigen::Vector3d& average_normal, plane_msgs::PlanePose& plane_pose)
-{
-	Result result = Succeeded;
-
-	ROS_ASSERT_MSG(0 != (int)normalized_normals.size(), "normalized_normal has no members");
-	ROS_ASSERT_MSG(nullptr != &plane_pose,              "plane_pose is null");
-
-	std::vector<normal_dev_info> normal_dev_infos;
-	sort_normals_with_deviation(normalized_normals, average_normal, normal_dev_infos);
-	// TODO: Use Macro or other method not to use magic number
-
-	// for debug
-	if(normal_dev_infos.size() >= 5)
-	{
-		normal_dev_infos.erase(normal_dev_infos.begin(), normal_dev_infos.begin() + 4);
-	}
-	else
-	{
-		// no operation
-	}
-
-	for(auto itr: normal_dev_infos)
-	{
-		plane_pose.pi1 += itr.normal[0];
-		plane_pose.pi2 += itr.normal[1];
-		plane_pose.pi3 += itr.normal[2];
-	}
-	plane_pose.pi1 /= normal_dev_infos.size();
-	plane_pose.pi2 /= normal_dev_infos.size();
-	plane_pose.pi3 /= normal_dev_infos.size();
-
-	return result;
-}
-
 /*
  * @brief This function estimate plane normal vector. The function resolves least square problem with SVD.
  */
@@ -489,25 +415,7 @@ Result calc_plane_2d_coordinate_on_camera_coordinate(const sensor_msgs::PointClo
 		std::vector<Eigen::Vector3d> normalized_normals;
 		Eigen::Vector3d average_normal;
 
-		calc_normal_candidates_and_average_normal(pointcloud2_ptr, *plane_candidate_info_ptr, normalized_normals, average_normal);
-		if( IS_NAN_FOR_POINT(average_normal) )
-		{
-			// for remove this plane from candidate
-			FILL_PLANE_POSE_WITH_NAN(plane_candidate_info_ptr->plane.pose);
-			continue;
-		}
-		else if( 0 == normalized_normals.size() )
-		{
-			// for remove this plane from candidate
-			FILL_PLANE_POSE_WITH_NAN(plane_candidate_info_ptr->plane.pose);
-			continue;
-		}
-		else
-		{
-			// no operation
-		}
-		
-		calc_refined_average_normal(normalized_normals, average_normal, plane_candidate_info_ptr->plane.pose);
+		calc_plane_normal_ransac(pointcloud2_ptr, *plane_candidate_info_ptr);
 		calc_plane_distance_from_camera(pointcloud2_ptr, *plane_candidate_info_ptr);
 #ifdef DEBUG
 		double plane_bearing = std::atan(plane_candidate_info_ptr->plane.pose.pi3 / plane_candidate_info_ptr->plane.pose.pi1);
@@ -669,7 +577,7 @@ void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
 		ostr << "result image" << itr.plane.info.id;
 		imshow(ostr.str(), itr.img);
 	}
-	waitKey(100);
+	waitKey(0);
 /*
 	extract_walls_from_candidate(plane_candidate_info);
 	for(auto itr: plane_candidate_info)
