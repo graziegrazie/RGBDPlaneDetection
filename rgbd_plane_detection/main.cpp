@@ -37,7 +37,7 @@ PlaneDetection plane_detection;
 image_transport::Publisher pub;
 ros::Subscriber camera_info_sub;
 image_geometry::PinholeCameraModel pinhole_camera_model;
-//Eigen::MatrixXd psuedo_camera_matrix_inverse;
+typedef pcl::SampleConsensusModelPlane<pcl::PointXYZ>::Ptr SampleConsensusModelPlanePtr;
 
 //#define DEBUG
 //#define DEBUG_VIEW
@@ -212,51 +212,6 @@ Result separate_region(const cv::Mat& img, std::vector<PlaneCandidateInfo>& plan
 }
 
 /*
- * @param[in]  plane_candidate_info
- * @param[out] pose
- */
-Result find_white_point(PlaneCandidateInfo& plane_candidate_info, Eigen::Vector2i& pose)
-{
-	Result result = Succeeded;
-
-	std::mt19937 mt{ std::random_device{}() };
-	std::uniform_real_distribution<double> dist(0, 1);
-
-	int plane_width  = plane_candidate_info.plane.info.width;
-	int plane_height = plane_candidate_info.plane.info.height;
-
-	int plane_top_left_x = plane_candidate_info.top_left_pose.x;
-	int plane_top_left_y = plane_candidate_info.top_left_pose.y;
-
-	for(unsigned char j = 0; j < MAX_FIND_POINT_ITERATION; j++) // avoid eternal loop
-	{
-		int px = dist(mt) * plane_width  + plane_top_left_x;
-		int py = dist(mt) * plane_height + plane_top_left_y;
-
-		Vec3b *src = plane_candidate_info.img.ptr<cv::Vec3b>(py); // Pointer to 1st element on Jth row.
-		if(IS_WHITE_PIEXL(src[px]))
-		{
-			pose[0] = px;
-			pose[1] = py;
-
-			result = Succeeded;
-			break;
-		}
-		else
-		{
-			// keep searching
-			// this is just a temporal value
-			pose[0] = (plane_width  / 2.0) + plane_top_left_x;
-			pose[1] = (plane_height / 2.0) + plane_top_left_y;
-
-			result = UnexpectedPointEntered;
-		}
-	}
-
-	return result;
-}
-
-/*
  * @brief this function convert the pose in image to point in 3D coordinate.
  *
  */
@@ -296,54 +251,42 @@ Result get_3d_point_from_pointcloud2(const sensor_msgs::PointCloud2ConstPtr& poi
 	return result;
 }
 
-Result calc_plane_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, PlaneCandidateInfo& plane_candidate_info, Eigen::Vector3d& normalized_normal)
-{
-	Result result = Succeeded;
-
-	Eigen::MatrixXd A = Eigen::MatrixXd::Zero(NUM_OF_POINTS_FOR_NORMAL_CALCULATION, 3);
-	Eigen::VectorXd b = Eigen::VectorXd::Zero(NUM_OF_POINTS_FOR_NORMAL_CALCULATION);
-
-	for(int j = 0; j < NUM_OF_POINTS_FOR_NORMAL_CALCULATION; j++)
-	{
-		Eigen::Vector2i pose;
-		Eigen::Vector3d point;
-
-		find_white_point(plane_candidate_info, pose);
-		get_3d_point_from_pointcloud2(pointcloud2_ptr, pose, point);
-		if(IS_NAN_FOR_POINT(point))
-		{
-			continue;
-		}
-		else
-		{
-			A(j, 0) = point[0];
-			A(j, 1) = point[1];
-			A(j, 2) = 1;
-
-			b(j) = point[2];
-		}
-	}
-	Eigen::Vector3d normal = A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b);
-	normalized_normal = normal.normalized();
-
-	return result;
-}
-
-typedef pcl::SampleConsensusModelPlane<pcl::PointXYZ>::Ptr SampleConsensusModelPlanePtr;
-pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_ (new pcl::PointCloud<pcl::PointXYZ> ());
-std::vector<int> indices_;
-
 Result calc_plane_normal_ransac(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, PlaneCandidateInfo& plane_candidate_info, Eigen::Vector3d& normalized_normal)
 {
 	Result result = Succeeded;
 
-	for(int i = 0; i < NUM_OF_POINTS_FOR_NORMAL_CALCULATION; i++)
+	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_ (new pcl::PointCloud<pcl::PointXYZ> ());
+	std::vector<int> indices_;
+	std::vector<Eigen::Vector2i> poses;
+
+	int plane_width  = plane_candidate_info.plane.info.width;
+	int plane_height = plane_candidate_info.plane.info.height;
+
+	int plane_top_left_x = plane_candidate_info.top_left_pose.x;
+	int plane_top_left_y = plane_candidate_info.top_left_pose.y;
+
+	for(int col = plane_top_left_x; col < (plane_width + plane_top_left_x); col++)
 	{
-		Eigen::Vector2i pose;
+		for(int row = plane_top_left_x; row < (plane_height + plane_top_left_y); row++)
+		{
+			unsigned char *src = plane_candidate_info.img.ptr<unsigned char>(row); // Pointer to 1st element on Jth row.
+			if(IS_WHITE_PIEXL(src[col]))
+			{
+				Eigen::Vector2i temp(col, row);
+				poses.push_back(temp);
+			}
+			else
+			{
+				continue;
+			}
+		}
+	}
+
+	for(auto itr: poses)
+	{
 		Eigen::Vector3d point;
 
-		find_white_point(plane_candidate_info, pose);
-		get_3d_point_from_pointcloud2(pointcloud2_ptr, pose, point);
+		get_3d_point_from_pointcloud2(pointcloud2_ptr, itr, point);
 		if(IS_NAN_FOR_POINT(point))
 		{
 			continue;
@@ -353,6 +296,14 @@ Result calc_plane_normal_ransac(const sensor_msgs::PointCloud2ConstPtr& pointclo
 			pcl::PointXYZ temp(point[0], point[1], point[2]);
 			cloud_->push_back(temp);
 		}
+	}
+
+	if(cloud_->size() == 0)
+	{
+		normalized_normal(0) = std::numeric_limits<double>::quiet_NaN();
+		normalized_normal(1) = std::numeric_limits<double>::quiet_NaN();
+		normalized_normal(2) = std::numeric_limits<double>::quiet_NaN();
+		return Failure;
 	}
 
 	SampleConsensusModelPlanePtr model (new pcl::SampleConsensusModelPlane<pcl::PointXYZ> (cloud_));
@@ -489,7 +440,16 @@ Result calc_refined_average_normal(std::vector<Eigen::Vector3d>& normalized_norm
 	std::vector<normal_dev_info> normal_dev_infos;
 	sort_normals_with_deviation(normalized_normals, average_normal, normal_dev_infos);
 	// TODO: Use Macro or other method not to use magic number
-	normal_dev_infos.erase(normal_dev_infos.begin(), normal_dev_infos.begin() + 4);
+
+	// for debug
+	if(normal_dev_infos.size() >= 5)
+	{
+		normal_dev_infos.erase(normal_dev_infos.begin(), normal_dev_infos.begin() + 4);
+	}
+	else
+	{
+		// no operation
+	}
 
 	for(auto itr: normal_dev_infos)
 	{
@@ -655,7 +615,6 @@ Result refine_scan_with_wall_information(std::vector<PlaneCandidateInfo>& wall_i
 										 sensor_msgs::LaserScan& refined_scan)
 {
 	Result result = Succeeded;
-	ROS_INFO("refine_scan_with_wall_information called");
 
 	ROS_ASSERT(nullptr != wall_info);
 
@@ -695,6 +654,7 @@ void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
 	// TODO: some plane has NaN coordinate. Please remove such element in plane_candidate_info
 	// TODO: consider if divided segments which are contained in same plane should be merged?
 
+	ROS_INFO("start to display image");
 	for(auto itr: plane_candidate_info)
 	{
 		ROS_INFO("[%d] %lf %lf %lf %lf", itr.plane.info.id, itr.plane.pose.pi1, itr.plane.pose.pi2, itr.plane.pose.pi3, itr.plane.pose.pi4);
@@ -710,13 +670,14 @@ void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
 		imshow(ostr.str(), itr.img);
 	}
 	waitKey(100);
-
+/*
 	extract_walls_from_candidate(plane_candidate_info);
 	for(auto itr: plane_candidate_info)
 	{
 		ROS_INFO("[%d] %lf %lf %lf %lf", itr.plane.info.id, itr.plane.pose.pi1, itr.plane.pose.pi2, itr.plane.pose.pi3, itr.plane.pose.pi4);
 	}
 	//refine_scan_with_wall_information(plane_candidate_info, laserscan_ptr, refined_scan);
+	*/
 }
 
 void camera_info_callback(const sensor_msgs::CameraInfoConstPtr& msg)
@@ -748,9 +709,9 @@ int main(int argc, char** argv)
 #if 1
 	//typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2, sensor_msgs::LaserScan> SyncPolicy;
 	typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2> SyncPolicy;
-	message_filters::Subscriber<sensor_msgs::Image>       depth_sub(nh, "depth", 5);
-	message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud2_sub(nh, "pointcloud2", 1);
-	message_filters::Subscriber<sensor_msgs::LaserScan>   laserscan_sub(nh, "scan", 1);
+	message_filters::Subscriber<sensor_msgs::Image>       depth_sub(nh, "/xtion/depth_registered/hw_registered/image_rect", 30);
+	message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud2_sub(nh, "/xtion/depth_registered/points", 3);
+	message_filters::Subscriber<sensor_msgs::LaserScan>   laserscan_sub(nh, "scan", 2);
 
 	// ExactTime takes a queue size as its constructor argument, hence MySyncPolicy(10)
   	//message_filters::Synchronizer<SyncPolicy> sync(SyncPolicy(10), depth_sub, pointcloud2_sub, laserscan_sub);
