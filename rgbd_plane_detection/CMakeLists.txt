@@ -36,6 +36,7 @@ find_package(catkin REQUIRED COMPONENTS
   plane_msgs
   geometry_msgs
   image_geometry
+  PCL
 )
 
 FIND_PACKAGE(Eigen3 REQUIRED)

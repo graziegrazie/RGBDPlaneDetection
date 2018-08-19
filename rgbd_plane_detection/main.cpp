@@ -25,6 +25,12 @@
 #include <sensor_msgs/CameraInfo.h>
 #include <image_geometry/pinhole_camera_model.h>
 
+#include <unsupported/Eigen/NonLinearOptimization>
+#include <unsupported/Eigen/NumericalDiff>
+
+#include <pcl/sample_consensus/ransac.h>
+#include <pcl/sample_consensus/sac_model_plane.h>
+
 using namespace cv;
 
 PlaneDetection plane_detection;
@@ -37,7 +43,7 @@ image_geometry::PinholeCameraModel pinhole_camera_model;
 //#define DEBUG_VIEW
 #define MAX_FIND_POINT_ITERATION				(100)
 #define NUM_OF_NORMAL_VECTOR					(10)
-#define NUM_OF_POINTS_FOR_NORMAL_CALCULATION	(20)
+#define NUM_OF_POINTS_FOR_NORMAL_CALCULATION	(10)
 #define NUM_OF_POINTS_FOR_CENTER_CALCULATION	(10)
 
 struct normal_dev_info
@@ -135,7 +141,8 @@ Result separate_region(const cv::Mat& img, std::vector<PlaneCandidateInfo>& plan
 
 		inRange(img, colors[i], colors[i], temp_plane_candidate_info.img);
 		findContours(temp_plane_candidate_info.img, contours, RETR_TREE, CHAIN_APPROX_SIMPLE);
-
+		
+		// TODO: check this part is needless
 		if(0 == contours.size())
 		{
 			continue;
@@ -322,6 +329,53 @@ Result calc_plane_normal(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr
 	return result;
 }
 
+typedef pcl::SampleConsensusModelPlane<pcl::PointXYZ>::Ptr SampleConsensusModelPlanePtr;
+pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_ (new pcl::PointCloud<pcl::PointXYZ> ());
+std::vector<int> indices_;
+
+Result calc_plane_normal_ransac(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr, PlaneCandidateInfo& plane_candidate_info, Eigen::Vector3d& normalized_normal)
+{
+	Result result = Succeeded;
+
+	for(int i = 0; i < NUM_OF_POINTS_FOR_NORMAL_CALCULATION; i++)
+	{
+		Eigen::Vector2i pose;
+		Eigen::Vector3d point;
+
+		find_white_point(plane_candidate_info, pose);
+		get_3d_point_from_pointcloud2(pointcloud2_ptr, pose, point);
+		if(IS_NAN_FOR_POINT(point))
+		{
+			continue;
+		}
+		else
+		{
+			pcl::PointXYZ temp(point[0], point[1], point[2]);
+			cloud_->push_back(temp);
+		}
+	}
+
+	SampleConsensusModelPlanePtr model (new pcl::SampleConsensusModelPlane<pcl::PointXYZ> (cloud_));
+  	// Create the RANSAC object
+	pcl::RandomSampleConsensus<pcl::PointXYZ> sac (model, 0.03);
+	bool ransac_result = sac.computeModel ();
+	Eigen::VectorXf coeff;
+	sac.getModelCoefficients (coeff);
+
+	normalized_normal << coeff[0], coeff[1], coeff[2];
+
+	if(coeff[2] < 0)
+	{
+		ROTATE_180_DEG_AROUND_Y_AXIS(normalized_normal);
+	}
+	else
+	{
+		// no operation
+	}
+
+	return result;
+}
+
 Result sort_normals_with_deviation(std::vector<Eigen::Vector3d>& normalized_normals, Eigen::Vector3d average_normal, std::vector<normal_dev_info>& normal_dev_infos)
 {
 	Result result = Succeeded;
@@ -360,7 +414,7 @@ Result calc_normal_candidates_and_average_normal(const sensor_msgs::PointCloud2C
 	{
 		Eigen::Vector3d normalized_normal;
 
-		calc_plane_normal(pointcloud2_ptr, plane_candidate_info, normalized_normal);
+		calc_plane_normal_ransac(pointcloud2_ptr, plane_candidate_info, normalized_normal);
 		if( IS_NAN_FOR_POINT(normalized_normal) )
 		{
 			continue;
@@ -375,9 +429,7 @@ Result calc_normal_candidates_and_average_normal(const sensor_msgs::PointCloud2C
 			average_normal[2] += normalized_normal[2];
 		}
 	}
-	average_normal[0] /= normalized_normals.size();
-	average_normal[1] /= normalized_normals.size();
-	average_normal[2] /= normalized_normals.size();
+	average_normal /= normalized_normals.size();
 
 	return result;
 }
@@ -531,7 +583,7 @@ Result calc_plane_2d_coordinate_on_camera_coordinate(const sensor_msgs::PointClo
 	return result;
 }
 
-Result extract_walls_from_candidate(std::vector<PlaneCandidateInfo> plane_candidate_info)
+Result extract_walls_from_candidate(std::vector<PlaneCandidateInfo>& plane_candidate_info)
 {
 	Result result = Succeeded;
 
@@ -542,7 +594,7 @@ Result extract_walls_from_candidate(std::vector<PlaneCandidateInfo> plane_candid
 	auto itr = plane_candidate_info.begin();
 	while(itr != plane_candidate_info.end())
 	{
-		if( IS_NAN_FOR_4D_POINT(itr.plane.pose) )
+		if( IS_NAN_FOR_4D_POINT(itr->plane.pose) )
 		{
 			// avoid invalid planes
 			itr = plane_candidate_info.erase(itr);
@@ -553,12 +605,12 @@ Result extract_walls_from_candidate(std::vector<PlaneCandidateInfo> plane_candid
 			// no operation
 		}
 
-		plane_msgs::PlanePose& plane_pose = itr.plane.pose;
+		plane_msgs::PlanePose& plane_pose = itr->plane.pose;
 		Eigen::Vector3d plane_normal(plane_pose.pi1, plane_pose.pi2, plane_pose.pi3);
 
 		ROS_INFO("Plane Nornal:%+1.3lf %+1.3lf %+1.3lf", plane_normal[0], plane_normal[1], plane_normal[2]);
 		// TODO: Magic number should be defind as MACRO!
-		if( CHECK_RANGE_NOT_INCL_EQUAL(Z_AXIS.dot(plane_normal), 0.9) )
+		if( false == CHECK_RANGE_NOT_INCL_EQUAL(Y_AXIS.dot(plane_normal), 0.15) )
 		{
 			// leave the planes perpendicular to floor and ceil.
 			itr = plane_candidate_info.erase(itr);
@@ -616,14 +668,15 @@ Result refine_scan_with_wall_information(std::vector<PlaneCandidateInfo>& wall_i
 }
 
 void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
-			  const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr,
-			  const sensor_msgs::LaserScanConstPtr& laserscan_ptr)
+			  const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr)
+			  //const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr,
+			  //const sensor_msgs::LaserScanConstPtr& laserscan_ptr)
 {
 	ROS_INFO("callback called");
 
 	sensor_msgs::LaserScan refined_scan;
 
-	std::vector<PlaneCandidateInfo> plane_candidate_info, wall_info;
+	std::vector<PlaneCandidateInfo> plane_candidate_info;
 	if(nullptr == depth_ptr )
 	{
 		ROS_WARN("depth_ptr is null");
@@ -641,8 +694,29 @@ void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
 	calc_plane_2d_coordinate_on_camera_coordinate(pointcloud2_ptr, plane_candidate_info);
 	// TODO: some plane has NaN coordinate. Please remove such element in plane_candidate_info
 	// TODO: consider if divided segments which are contained in same plane should be merged?
+
+	for(auto itr: plane_candidate_info)
+	{
+		ROS_INFO("[%d] %lf %lf %lf %lf", itr.plane.info.id, itr.plane.pose.pi1, itr.plane.pose.pi2, itr.plane.pose.pi3, itr.plane.pose.pi4);
+
+		rectangle( itr.img,
+		           itr.top_left_pose,
+				   cv::Point(itr.top_left_pose.x + itr.plane.info.width, itr.top_left_pose.y + itr.plane.info.height),
+				   cv::Scalar( 126, 126, 126 ),
+				   2 );
+
+		ostringstream ostr;
+		ostr << "result image" << itr.plane.info.id;
+		imshow(ostr.str(), itr.img);
+	}
+	waitKey(100);
+
 	extract_walls_from_candidate(plane_candidate_info);
-	refine_scan_with_wall_information(plane_candidate_info, laserscan_ptr, refined_scan);
+	for(auto itr: plane_candidate_info)
+	{
+		ROS_INFO("[%d] %lf %lf %lf %lf", itr.plane.info.id, itr.plane.pose.pi1, itr.plane.pose.pi2, itr.plane.pose.pi3, itr.plane.pose.pi4);
+	}
+	//refine_scan_with_wall_information(plane_candidate_info, laserscan_ptr, refined_scan);
 }
 
 void camera_info_callback(const sensor_msgs::CameraInfoConstPtr& msg)
@@ -672,14 +746,17 @@ int main(int argc, char** argv)
 	pub = it.advertise ("/RGBDPlaneDetection/result_image", 1);
 
 #if 1
-	typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2, sensor_msgs::LaserScan> SyncPolicy;
-	message_filters::Subscriber<sensor_msgs::Image>       depth_sub(nh, "depth", 20);
-	message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud2_sub(nh, "pointcloud2", 10);
-	message_filters::Subscriber<sensor_msgs::LaserScan>   laserscan_sub(nh, "scan", 4);
+	//typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2, sensor_msgs::LaserScan> SyncPolicy;
+	typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2> SyncPolicy;
+	message_filters::Subscriber<sensor_msgs::Image>       depth_sub(nh, "depth", 5);
+	message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud2_sub(nh, "pointcloud2", 1);
+	message_filters::Subscriber<sensor_msgs::LaserScan>   laserscan_sub(nh, "scan", 1);
 
 	// ExactTime takes a queue size as its constructor argument, hence MySyncPolicy(10)
-  	message_filters::Synchronizer<SyncPolicy> sync(SyncPolicy(10), depth_sub, pointcloud2_sub, laserscan_sub);
-	sync.registerCallback(boost::bind(&callback, _1, _2, _3));
+  	//message_filters::Synchronizer<SyncPolicy> sync(SyncPolicy(10), depth_sub, pointcloud2_sub, laserscan_sub);
+	//sync.registerCallback(boost::bind(&callback, _1, _2, _3));
+	message_filters::Synchronizer<SyncPolicy> sync(SyncPolicy(10), depth_sub, pointcloud2_sub);
+	sync.registerCallback(boost::bind(&callback, _1, _2));
 
 	//image_transport::Subscriber sub1 = it.subscribe ("depth", 1, &PlaneDetection::readDepthImage, &plane_detection);
 	camera_info_sub = nh.subscribe("/xtion/depth_registered/camera_info", 1, camera_info_callback);

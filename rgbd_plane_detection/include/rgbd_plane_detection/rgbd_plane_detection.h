@@ -36,4 +36,7 @@ using PlaneCandidateInfo = struct PlaneCandidateInfo_
 												 pose.pi3 = std::numeric_limits<double>::quiet_NaN();\
 												 pose.pi4 = std::numeric_limits<double>::quiet_NaN();}
 
-Eigen::Vector3d Z_AXIS(0.0, 0.0, 1.0);
+Eigen::Vector3d Y_AXIS(0.0, 1.0, 0.0);
+Eigen::AngleAxisd rot = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitY());
+
+#define ROTATE_180_DEG_AROUND_Y_AXIS(vec)		(vec = rot * vec)
