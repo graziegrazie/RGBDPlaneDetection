@@ -27,6 +27,7 @@
 
 #include <pcl/sample_consensus/ransac.h>
 #include <pcl/sample_consensus/sac_model_plane.h>
+#include <deque>
 
 using namespace cv;
 
@@ -35,10 +36,15 @@ image_transport::Publisher pub;
 ros::Subscriber camera_info_sub;
 image_geometry::PinholeCameraModel pinhole_camera_model;
 typedef pcl::SampleConsensusModelPlane<pcl::PointXYZ>::Ptr SampleConsensusModelPlanePtr;
+std::deque<sensor_msgs::Image> depth_deque(0);
 
 //#define DEBUG
 //#define DEBUG_VIEW
 #define NUM_OF_POINTS_FOR_CENTER_CALCULATION	(10)
+#define NUM_OF_DEPTH_IMAGES_STORE_IN_DEQUE		(5)
+
+#define TIME_GAP_THRESHOLD_FOR_MSG_SYNC				(500)
+#define DOT_PRODUCT_THRESHOLD_FOR_WALL_JUDGEMENT	(0.15)
 
 struct normal_dev_info
 {
@@ -412,9 +418,7 @@ Result extract_walls_from_candidate(std::vector<PlaneCandidateInfo>& plane_candi
 		plane_msgs::PlanePose& plane_pose = itr->plane.pose;
 		Eigen::Vector3d plane_normal(plane_pose.pi1, plane_pose.pi2, plane_pose.pi3);
 
-		ROS_INFO("Plane Nornal:%+1.3lf %+1.3lf %+1.3lf", plane_normal[0], plane_normal[1], plane_normal[2]);
-		// TODO: Magic number should be defind as MACRO!
-		if( false == CHECK_RANGE_NOT_INCL_EQUAL(Y_AXIS.dot(plane_normal), 0.15) )
+		if( false == CHECK_RANGE_NOT_INCL_EQUAL(Y_AXIS.dot(plane_normal), DOT_PRODUCT_THRESHOLD_FOR_WALL_JUDGEMENT) )
 		{
 			// leave the planes perpendicular to floor and ceil.
 			itr = plane_candidate_info.erase(itr);
@@ -424,6 +428,8 @@ Result extract_walls_from_candidate(std::vector<PlaneCandidateInfo>& plane_candi
 		{
 			// no operation
 		}
+
+		// execute this line when no "continue" to move to next iterator
 		itr++;
 	}
 
@@ -466,9 +472,73 @@ Result refine_scan_with_wall_information(std::vector<PlaneCandidateInfo>& wall_i
 	return result;
 }
 
+/*
+ * @brief this function is a callback for depth image. This function stores images within a limit.
+ */
+void depth_image_callback(const sensor_msgs::ImageConstPtr& depth_ptr)
+{
+	//ROS_INFO("depth_image_callback called");
+
+	depth_deque.emplace_back(*depth_ptr);
+
+	// use depth_deque as a ring buffer
+	while(NUM_OF_DEPTH_IMAGES_STORE_IN_DEQUE < depth_deque.size())
+	{
+		depth_deque.pop_front();	
+	}
+}
+
+Result get_plane_segmented_image(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr,
+			  					 const sensor_msgs::LaserScanConstPtr& laserscan_ptr,
+								 sensor_msgs::Image& depth_image)
+{
+	Result result = Succeeded;
+
+	bool sync_depth_find_flag = false;
+
+	int pc2_stamp_nsec  = pointcloud2_ptr->header.stamp.nsec;
+	int scan_stamp_nsec = laserscan_ptr->header.stamp.nsec;
+
+	while( false == depth_deque.empty() )
+	{
+		depth_image = depth_deque.front();
+		depth_deque.pop_front();
+
+		int depth_stamp_nsec = depth_image.header.stamp.nsec;
+		
+		int diff_stamp_between_depth_and_pc2  = (pc2_stamp_nsec  - depth_stamp_nsec) * 1e-6;
+		int diff_stamp_between_depth_and_scan = (scan_stamp_nsec - depth_stamp_nsec) * 1e-6;
+
+		if( CHECK_RANGE_INCL_EQUAL(diff_stamp_between_depth_and_pc2,  TIME_GAP_THRESHOLD_FOR_MSG_SYNC) &&
+		    CHECK_RANGE_INCL_EQUAL(diff_stamp_between_depth_and_scan, TIME_GAP_THRESHOLD_FOR_MSG_SYNC) )
+		{
+			sync_depth_find_flag = true;
+			break;
+		}
+		else
+		{
+			// keep going
+		}
+	}
+
+	if( false == sync_depth_find_flag )
+	{
+		ROS_WARN("Couldn't find sync depth image in Deque");
+		return Failure;
+	}
+	else
+	{
+		plane_detection.readDepthImage(depth_image);
+	}
+
+	depth_image = *(plane_detection.runPlaneDetection());
+	pub.publish(depth_image);
+
+	return result;
+}
+
 #if 1
-void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
-			  const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr,
+void callback(const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr,
 			  const sensor_msgs::LaserScanConstPtr& laserscan_ptr)
 #else
 void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
@@ -477,21 +547,18 @@ void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
 {
 	ROS_INFO("callback called");
 
-	sensor_msgs::LaserScan refined_scan;
-
 	std::vector<PlaneCandidateInfo> plane_candidate_info;
-	if(nullptr == depth_ptr )
+	sensor_msgs::LaserScan refined_scan;
+	sensor_msgs::Image depth_image;
+
+	if( Failure == get_plane_segmented_image(pointcloud2_ptr, laserscan_ptr, depth_image) )
 	{
-		ROS_WARN("depth_ptr is null");
 		return;
 	}
 	else
 	{
-		plane_detection.readDepthImage(depth_ptr);
+		// no operation
 	}
-
-	sensor_msgs::ImagePtr img_ptr = plane_detection.runPlaneDetection();
-	pub.publish(*img_ptr);
 
 	separate_region(plane_detection.seg_img_, plane_candidate_info);
 	calc_plane_2d_coordinate_on_camera_coordinate(pointcloud2_ptr, plane_candidate_info);
@@ -550,13 +617,19 @@ int main(int argc, char** argv)
 
 #if 1
 #if 1
-	typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2, sensor_msgs::LaserScan> SyncPolicy;
-	message_filters::Subscriber<sensor_msgs::Image>       depth_sub(nh, "/xtion/depth_registered/hw_registered/image_rect", 10);
-	message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud2_sub(nh, "/xtion/depth_registered/points", 3);
-	message_filters::Subscriber<sensor_msgs::LaserScan>   laserscan_sub(nh, "/xtion/scan", 3);
+	//typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2, sensor_msgs::LaserScan> SyncPolicy;
+	//message_filters::Subscriber<sensor_msgs::Image>       depth_sub(nh, "/xtion/depth_registered/hw_registered/image_rect", 10);
+	typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::PointCloud2, sensor_msgs::LaserScan> SyncPolicy;
+	//image_transport::Subscriber depth_sub = it.subscribe ("/xtion/depth_registered/hw_registered/image_rect", 1, &PlaneDetection::readDepthImage, &plane_detection);
+	image_transport::Subscriber depth_sub = it.subscribe ("/xtion/depth_registered/hw_registered/image_rect", 1, depth_image_callback);
 
-	message_filters::Synchronizer<SyncPolicy> sync(SyncPolicy(10), depth_sub, pointcloud2_sub, laserscan_sub);
-	sync.registerCallback(boost::bind(&callback, _1, _2, _3));
+	message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud2_sub(nh, "/xtion/depth_registered/points", 2);
+	message_filters::Subscriber<sensor_msgs::LaserScan>   laserscan_sub(nh, "/xtion/scan", 2);
+
+	//message_filters::Synchronizer<SyncPolicy> sync(SyncPolicy(10), depth_sub, pointcloud2_sub, laserscan_sub);
+	message_filters::Synchronizer<SyncPolicy> sync(SyncPolicy(10), pointcloud2_sub, laserscan_sub);
+	//sync.registerCallback(boost::bind(&callback, _1, _2, _3));
+	sync.registerCallback(boost::bind(&callback, _1, _2));
 #else
 	typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2> SyncPolicy;
 	message_filters::Subscriber<sensor_msgs::Image>       depth_sub(nh, "/xtion/depth_registered/hw_registered/image_rect", 10);
@@ -565,7 +638,6 @@ int main(int argc, char** argv)
 	message_filters::Synchronizer<SyncPolicy> sync(SyncPolicy(10), depth_sub, pointcloud2_sub);
 	sync.registerCallback(boost::bind(&callback, _1, _2));
 #endif
-	//image_transport::Subscriber sub1 = it.subscribe ("depth", 1, &PlaneDetection::readDepthImage, &plane_detection);
 	camera_info_sub = nh.subscribe("/xtion/depth_registered/camera_info", 1, camera_info_callback);
 
 	ros::spin();

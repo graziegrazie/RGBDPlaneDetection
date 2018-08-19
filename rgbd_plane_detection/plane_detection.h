@@ -95,7 +95,7 @@ public:
 
 	void readColorImage(const sensor_msgs::ImageConstPtr& color_msg);
 
-	void readDepthImage(const sensor_msgs::ImageConstPtr& depth_msg);
+	void readDepthImage(sensor_msgs::Image& depth_msg);
 
 	auto runPlaneDetection() -> sensor_msgs::ImagePtr;
 	//void runPlaneDetection();

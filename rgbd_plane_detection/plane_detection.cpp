@@ -82,7 +82,7 @@ void PlaneDetection::readColorImage(const sensor_msgs::ImageConstPtr& color_msg)
 	}
 }
 
-void PlaneDetection::readDepthImage(const sensor_msgs::ImageConstPtr& depth_msg)
+void PlaneDetection::readDepthImage(sensor_msgs::Image& depth_msg)
 {
 	cv_bridge::CvImagePtr cv_ptr;
 	cv_ptr = cv_bridge::toCvCopy(depth_msg, sensor_msgs::image_encodings::TYPE_16UC1);
