@@ -466,10 +466,14 @@ Result refine_scan_with_wall_information(std::vector<PlaneCandidateInfo>& wall_i
 	return result;
 }
 
+#if 1
+void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
+			  const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr,
+			  const sensor_msgs::LaserScanConstPtr& laserscan_ptr)
+#else
 void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
 			  const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr)
-			  //const sensor_msgs::PointCloud2ConstPtr& pointcloud2_ptr,
-			  //const sensor_msgs::LaserScanConstPtr& laserscan_ptr)
+#endif
 {
 	ROS_INFO("callback called");
 
@@ -496,7 +500,7 @@ void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
 
 	for(auto itr: plane_candidate_info)
 	{
-		ROS_INFO("[%d] %lf %lf %lf %lf", itr.plane.info.id, itr.plane.pose.pi1, itr.plane.pose.pi2, itr.plane.pose.pi3, itr.plane.pose.pi4);
+		ROS_INFO("[A%d] %lf %lf %lf %lf", itr.plane.info.id, itr.plane.pose.pi1, itr.plane.pose.pi2, itr.plane.pose.pi3, itr.plane.pose.pi4);
 
 		rectangle( itr.img,
 		           itr.top_left_pose,
@@ -509,14 +513,13 @@ void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
 		imshow(ostr.str(), itr.img);
 	}
 	waitKey(100);
-/*
+
 	extract_walls_from_candidate(plane_candidate_info);
 	for(auto itr: plane_candidate_info)
 	{
-		ROS_INFO("[%d] %lf %lf %lf %lf", itr.plane.info.id, itr.plane.pose.pi1, itr.plane.pose.pi2, itr.plane.pose.pi3, itr.plane.pose.pi4);
+		ROS_INFO("[B%d] %lf %lf %lf %lf", itr.plane.info.id, itr.plane.pose.pi1, itr.plane.pose.pi2, itr.plane.pose.pi3, itr.plane.pose.pi4);
 	}
-	//refine_scan_with_wall_information(plane_candidate_info, laserscan_ptr, refined_scan);
-	*/
+	refine_scan_with_wall_information(plane_candidate_info, laserscan_ptr, refined_scan);
 }
 
 void camera_info_callback(const sensor_msgs::CameraInfoConstPtr& msg)
@@ -546,18 +549,22 @@ int main(int argc, char** argv)
 	pub = it.advertise ("/RGBDPlaneDetection/result_image", 1);
 
 #if 1
-	//typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2, sensor_msgs::LaserScan> SyncPolicy;
-	typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2> SyncPolicy;
-	message_filters::Subscriber<sensor_msgs::Image>       depth_sub(nh, "/xtion/depth_registered/hw_registered/image_rect", 30);
+#if 1
+	typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2, sensor_msgs::LaserScan> SyncPolicy;
+	message_filters::Subscriber<sensor_msgs::Image>       depth_sub(nh, "/xtion/depth_registered/hw_registered/image_rect", 10);
 	message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud2_sub(nh, "/xtion/depth_registered/points", 3);
-	message_filters::Subscriber<sensor_msgs::LaserScan>   laserscan_sub(nh, "scan", 2);
+	message_filters::Subscriber<sensor_msgs::LaserScan>   laserscan_sub(nh, "/xtion/scan", 3);
 
-	// ExactTime takes a queue size as its constructor argument, hence MySyncPolicy(10)
-  	//message_filters::Synchronizer<SyncPolicy> sync(SyncPolicy(10), depth_sub, pointcloud2_sub, laserscan_sub);
-	//sync.registerCallback(boost::bind(&callback, _1, _2, _3));
+	message_filters::Synchronizer<SyncPolicy> sync(SyncPolicy(10), depth_sub, pointcloud2_sub, laserscan_sub);
+	sync.registerCallback(boost::bind(&callback, _1, _2, _3));
+#else
+	typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::PointCloud2> SyncPolicy;
+	message_filters::Subscriber<sensor_msgs::Image>       depth_sub(nh, "/xtion/depth_registered/hw_registered/image_rect", 10);
+	message_filters::Subscriber<sensor_msgs::PointCloud2> pointcloud2_sub(nh, "/xtion/depth_registered/points", 2);
+
 	message_filters::Synchronizer<SyncPolicy> sync(SyncPolicy(10), depth_sub, pointcloud2_sub);
 	sync.registerCallback(boost::bind(&callback, _1, _2));
-
+#endif
 	//image_transport::Subscriber sub1 = it.subscribe ("depth", 1, &PlaneDetection::readDepthImage, &plane_detection);
 	camera_info_sub = nh.subscribe("/xtion/depth_registered/camera_info", 1, camera_info_callback);
 
