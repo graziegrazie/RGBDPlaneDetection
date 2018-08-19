@@ -25,9 +25,6 @@
 #include <sensor_msgs/CameraInfo.h>
 #include <image_geometry/pinhole_camera_model.h>
 
-#include <unsupported/Eigen/NonLinearOptimization>
-#include <unsupported/Eigen/NumericalDiff>
-
 #include <pcl/sample_consensus/ransac.h>
 #include <pcl/sample_consensus/sac_model_plane.h>
 
@@ -41,9 +38,6 @@ typedef pcl::SampleConsensusModelPlane<pcl::PointXYZ>::Ptr SampleConsensusModelP
 
 //#define DEBUG
 //#define DEBUG_VIEW
-#define MAX_FIND_POINT_ITERATION				(100)
-#define NUM_OF_NORMAL_VECTOR					(10)
-#define NUM_OF_POINTS_FOR_NORMAL_CALCULATION	(10)
 #define NUM_OF_POINTS_FOR_CENTER_CALCULATION	(10)
 
 struct normal_dev_info
@@ -109,23 +103,7 @@ void runMRFOptimization()
 	delete smooth;
 	delete data;
 }
-//-----------------------------------------------------------------
-void cameraInfoCallback(sensor_msgs::CameraInfo color_info)
-{
-	ros::NodeHandle nh;
-	color_info.header.frame_id ="plane_detection";
-	ros::Publisher pub_info = nh.advertise<sensor_msgs::CameraInfo>("/camera/plane_detection/camera_info", 1);
-	pub_info.publish(color_info);
-}
-
-void printUsage()
-{
-	cout << "Usage: rosrun rgbd_plane_detection rgbd_plane_detection color:=color_image_topic depth:=depth_image_topic" << endl;
-	// cout << "-o: run MRF-optimization based plane refinement" << endl;
-}
-
 /*****************************************************************************************************************************************/
-//Result separate_region(const cv::Mat& img, std::vector<cv::Mat>& out_imgs, plane_msgs::PlaneArray plane_array)
 Result separate_region(const cv::Mat& img, std::vector<PlaneCandidateInfo>& plane_candidate_info)
 {
 	Result result = Succeeded;
@@ -195,19 +173,7 @@ Result separate_region(const cv::Mat& img, std::vector<PlaneCandidateInfo>& plan
 		temp_plane_candidate_info.top_left_pose = temp_pose;
 
 		plane_candidate_info.push_back(temp_plane_candidate_info);
-
-#ifdef DEBUG_VIEW
-		Scalar color = Scalar( rng.uniform(0, 256), rng.uniform(0,256), rng.uniform(0,256) );
-		rectangle( temp_plane_candidate_info.img, biggest_rect.tl(), biggest_rect.br(), color, 2 );
-
-		ostringstream ostr;
-		ostr << "result image" << i;
-		imshow(ostr.str(), temp_plane_candidate_info.img);
 	}
-	waitKey(100);
-#else
-	}
-#endif
 	return result;
 }
 
@@ -417,35 +383,6 @@ Result calc_plane_2d_coordinate_on_camera_coordinate(const sensor_msgs::PointClo
 
 		calc_plane_normal_ransac(pointcloud2_ptr, *plane_candidate_info_ptr);
 		calc_plane_distance_from_camera(pointcloud2_ptr, *plane_candidate_info_ptr);
-#ifdef DEBUG
-		double plane_bearing = std::atan(plane_candidate_info_ptr->plane.pose.pi3 / plane_candidate_info_ptr->plane.pose.pi1);
-		ROS_INFO("[%d]%+3.3lf[deg] %lf %lf", plane_index, RAD2DEG(plane_bearing), ave_xx, ave_zz);
-		{
-			double ax = 0, ay = 0, az = 0;
-			for(auto itr_: normal_dev_infos)
-			{
-				Eigen::Vector3d itr = itr_.normal;
-
-				ax = itr[0] / normal_dev_infos.size();
-				ay = itr[1] / normal_dev_infos.size();
-				az = itr[2] / normal_dev_infos.size();
-			}
-			double roll  = std::atan(az / ay);
-			double pitch = std::atan(az / ax);
-			double yaw   = std::atan(ay / ax);
-			ROS_INFO("[%d]%+3.3lf %+3.3lf %+3.3lf",plane_index, RAD2DEG(roll), RAD2DEG(pitch), RAD2DEG(yaw));
-		}
-
-		for(auto itr_: normal_dev_infos)
-		{
-			Eigen::Vector3d itr = itr_.normal;
-			double roll  = std::atan(itr[2] / itr[1]);
-			double pitch = std::atan(itr[2] / itr[0]);
-			double yaw   = std::atan(itr[1] / itr[0]);
-			ROS_INFO("%+3.3lf %+3.3lf %+3.3lf", RAD2DEG(roll), RAD2DEG(pitch), RAD2DEG(yaw));
-		}
-		std::cout << "" << std::endl;
-#endif
 	}
 	std::cout << "" << std::endl;
 	return result;
@@ -458,7 +395,6 @@ Result extract_walls_from_candidate(std::vector<PlaneCandidateInfo>& plane_candi
 	ROS_ASSERT(nullptr != plane_candidate_info);
 	ROS_ASSERT(nullptr != wall_info);
 
-	//for(auto itr: plane_candidate_info)
 	auto itr = plane_candidate_info.begin();
 	while(itr != plane_candidate_info.end())
 	{
@@ -511,10 +447,6 @@ Result calc_plane_3d_width_and_height(PlaneCandidateInfo& wall_info)
 	wall_info.plane.info_real.width  = plane_3d_width_and_height.x;
 	wall_info.plane.info_real.height = plane_3d_width_and_height.y;
 
-#ifdef DEBUG
-	ROS_INFO("[calc_plane_3d_width_and_height]D = %lf W = %lf H = %lf", wall_info.plane.pose.pi4, plane_3d_width_and_height[0], plane_3d_width_and_height[1]);
-#endif
-
 	return result;
 }
 
@@ -562,7 +494,6 @@ void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
 	// TODO: some plane has NaN coordinate. Please remove such element in plane_candidate_info
 	// TODO: consider if divided segments which are contained in same plane should be merged?
 
-	ROS_INFO("start to display image");
 	for(auto itr: plane_candidate_info)
 	{
 		ROS_INFO("[%d] %lf %lf %lf %lf", itr.plane.info.id, itr.plane.pose.pi1, itr.plane.pose.pi2, itr.plane.pose.pi3, itr.plane.pose.pi4);
@@ -577,7 +508,7 @@ void callback(const sensor_msgs::ImageConstPtr& depth_ptr,
 		ostr << "result image" << itr.plane.info.id;
 		imshow(ostr.str(), itr.img);
 	}
-	waitKey(0);
+	waitKey(100);
 /*
 	extract_walls_from_candidate(plane_candidate_info);
 	for(auto itr: plane_candidate_info)
